@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "release-rollup"
+version = "0.1.0"
+description = "Zip old release folders into per-release, per-line and pre-1.0.0 archives"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.14"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Ghost-Hackers/release-rollup"
+Issues = "https://github.com/Ghost-Hackers/release-rollup/issues"
+Changelog = "https://github.com/Ghost-Hackers/release-rollup/blob/master/CHANGELOG.md"
+
+[project.scripts]
+release-rollup = "release_rollup.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+release_rollup = ["VERSION"]

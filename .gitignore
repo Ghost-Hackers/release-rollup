@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+var/
+archive/
+*.bak*
+prereleases/
+releases/*
+!releases/README.md
