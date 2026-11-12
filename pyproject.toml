@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "release-rollup"
-version = "0.1.0"
-description = "Zip old release folders into per-release, per-line and pre-1.0.0 archives"
+version = "0.2.0b1"
+description = "Roll old release and pre-release folders up into verified, deduplicated zips"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.14"

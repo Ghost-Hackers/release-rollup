@@ -4,6 +4,33 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.2.0-beta.1] - 2026-11-12
+
+### Added
+
+- `run` and `pre` deduplicate by default. Repeated content across the builds in a rollup is stored once, in a normal zip with the same name, and that includes the members of zips inside a build. Three beta builds that are 41,026,579 bytes unpacked come to 13,698,897 bytes.
+- `--no-dedupe` on `run` and `pre` writes the plain zip of 0.1.0.
+- `release-rollup restore ROLLUP.zip --out DIR` writes the original files back, byte for byte. `--check` proves them and writes nothing. `--max-size BYTES` sets the limit on what a rollup may unpack to.
+- `README.txt` in every deduplicated rollup says how to restore and carries a Python script for when the tool isn't around.
+- A `space:` line at the end of a run gives bytes before, after and saved.
+- `release-rollup upgrade --root DIR [--dry-run] [--trash-dir DIR]` turns the plain rollups in a releases or prereleases folder into deduplicated ones. Every file is compared by sha256 with the old zip, the new zip is moved in place in one step, and the old zip goes to the trash afterwards. A zip that is already deduplicated, that shares too little, or that isn't a rollup is left as it is, and a zip that fails its check is refused and untouched. A second run does nothing.
+- `release_rollup.Rollup` for reading a rollup of either format from other tools.
+- `release-rollup archive --root DIR --out NAME.zip [--dry-run] [--trash-dir DIR]` rolls the plain files of a folder, such as report zips or test kits, into one deduplicated archive. Content shared between files is stored once and each original comes back byte for byte with `restore`, or is proved with `restore --check`. The `README.txt` in the archive says how. New files are added to the same archive on a later run, each file is compared by sha256 with its source before the source goes to the trash, and a repeat run prints `nothing to do`. `INDEX.md` is archived but stays in the folder.
+- The manifest takes an optional `top` rule. `"flat"` allows a plain file name where the default rule needs a `v<version>/` folder. An archive is written as format 2 with `"top": "flat"`. Rollups from `run`, `pre` and `upgrade` keep format 1.
+
+### Changed
+
+- A rollup is verified through the same reader that restores it, so every file is rebuilt and compared by sha256 with its source before a source is trashed.
+- A rollup stays a plain zip, with the same bytes as `--no-dedupe`, when sharing saves under 1,024 bytes or under 1%, or when nothing new is added. An existing plain rollup becomes deduplicated when it's rewritten for a new member or by `upgrade`, after every file is compared with the old zip.
+- On Windows, `run`, `pre` and `upgrade` refuse file names Windows cannot hold (`CON`, `COM1`, `aux.txt`, `NUL`, a trailing dot or space, `:` and similar) before writing anything. The error lists the files, the sources stay where they are, and `--dry-run` refuses too. `upgrade` refuses just the zip that holds one. In 0.1.0 `run` would zip such a tree and trash the sources, and only `restore` on Windows then refused the zip.
+- On other systems the same names print one `warning:` line and the rollup is written, because a rollup may be restored on Windows later.
+- `COM` and `LPT` followed by a superscript digit count as reserved names.
+- Format 2 is the highest format that is read. A rollup with a higher number is refused by name.
+
+### Fixed
+
+- A full disk, an unreadable source or a file name the system refuses to open (`NUL` or a trailing dot on Windows) now ends in one `error:` line and exit code 1 instead of a traceback.
+
 ## [0.1.0] - 2026-11-12
 
 ### Added

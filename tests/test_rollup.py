@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 
+import hostcat
 from release_rollup import core  # noqa: E402
 from release_rollup.cli import main
 from release_rollup.core import Fail, apply, make_trash, move_trash, plan
@@ -299,6 +300,9 @@ class Output(Base):
         with contextlib.redirect_stdout(out):
             self.assertEqual(main(['run', '--root', self.root, '--trash-dir', self.trash_dir]), 0)
         self.assertEqual(out.getvalue().strip(), 'nothing to do')
+
+
+load_tests = hostcat.load_tests
 
 
 if __name__ == '__main__':

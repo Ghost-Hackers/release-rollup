@@ -1,6 +1,6 @@
 # release-rollup
 
-A small command line tool that keeps a releases folder tidy. You publish releases as `v<version>/` folders, and release-rollup zips the old ones by version line so only the newest release stays unpacked. It is for any project that publishes releases as folders and doesn't want the old ones piling up. Each zip is tested and compared by sha256 with its source before anything goes to the trash.
+A small command line tool that keeps a releases folder tidy. You publish releases as `v<version>/` folders, and release-rollup zips the old ones by version line so only the newest release stays unpacked. It is for any project that publishes releases as folders and doesn't want the old ones piling up. Content that repeats across the builds in a zip is stored once, and each zip is tested and compared by sha256 with its source before anything goes to the trash.
 
 Before, with 0.2.0 just published:
 
@@ -48,8 +48,8 @@ release-rollup run --root releases --dry-run
 release-rollup run --root releases
 # on Windows, name a folder for the replaced files
 release-rollup run --root releases --trash-dir C:/trash
-# tidy a prereleases/ folder of alpha, beta and rc builds
-release-rollup pre --root prereleases --current 1.0.0-alpha.6 --dry-run
+# get the original files back out of a rollup
+release-rollup restore releases/0.1.zip --out restored
 ```
 
 ## Commands
@@ -58,6 +58,9 @@ release-rollup pre --root prereleases --current 1.0.0-alpha.6 --dry-run
 | --- | --- |
 | `run` | Zip the old releases in a releases folder and trash the pre-release builds of published versions |
 | `pre` | Zip the older alpha, beta and rc builds in a prereleases folder |
+| `restore` | Prove a rollup and write its original files back, byte for byte |
+| `upgrade` | Turn plain rollup zips into deduplicated ones |
+| `archive` | Roll the files of a folder into one deduplicated archive |
 
 ## Documentation
 

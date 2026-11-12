@@ -51,7 +51,9 @@ Tidy the tester builds after each publish:
 release-rollup pre --root prereleases --current <VERSION>
 ```
 
-Full form: `release-rollup pre [--root DIR] [--current VERSION] [--dry-run] [--marker NAME ...] [--trash-dir DIR]`. The suite has 69 tests, all in `tests/test_rollup.py`, 15 of them in the `Prereleases` class at the end of `tests/test_rollup.py`.
+Full form: `release-rollup pre [--root DIR] [--current VERSION] [--dry-run] [--marker NAME ...] [--trash-dir DIR]`. The `pre` tests are the `Prereleases` class at the end of `tests/test_rollup.py`.
+
+Archive a folder of plain files: `PYTHONPATH=src python3 -m release_rollup archive --root DIR --out NAME.zip [--dry-run] [--trash-dir DIR]`. Prove it with `restore NAME.zip --check`.
 
 ## Behavior
 
@@ -69,8 +71,22 @@ Rules of `pre`:
 General:
 
 - The tests have no dependency on `gio`. They use `--trash-dir` style moves.
-- `VERSION` and `src/release_rollup/VERSION` must match. `pyproject.toml` carries the same number in PEP 440 form (`1.2.0b1` for `1.2.0-beta.1`).
+- `VERSION` and `src/release_rollup/VERSION` must match. `pyproject.toml` carries the same number in PEP 440 form (`0.2.0b1` for `0.2.0-beta.1`), and `tests/test_dedupe.py` checks all of them agree.
+- `host_is_windows()` in `core.py` decides whether a reserved name refuses the run. Nothing switches it from outside: the tests check the real behavior of the host they run on.
+- Names Windows can't hold on disk (`NUL`, `aux.c`, `trail.`, `a:b`, case clashes) reach the tool inside a zip or an archive manifest, so the same test runs on both systems. Windows refuses them with nothing written or trashed; Linux prints a warning and carries on.
+- `tests/hosts.tsv` lists the few tests that only make sense on one system, and every test module's `load_tests` leaves out the other system's rows. `tests/test_hosts.py` checks that every row names a test that exists. All other tests run on both systems.
+- `zipfile` on Windows turns a backslash in an entry name into a slash when it reads the zip, so `v0.1.0\evil` is read as `v0.1.0/evil`: a plain file inside the release folder.
+- `os.kill(pid, signal.SIGTERM)` on Windows ends the process at once with exit code 15. There is no `SIGKILL`; the kill tests use `kill_plan()` in `tests/test_dedupe.py` to pick each system's call and return code.
+- The zip interop test reads a rollup with `unzip` on Linux and with Windows' own `tar.exe` (in `System32`) on Windows.
+- The symlink tests create symlinks on both systems. On Windows that needs Developer Mode or an elevated shell, and the tests fail without it.
 - Zip members have a fixed 1980-01-01 timestamp and mode 0644, and are sorted by name.
 - The temporary zip is named `.<target>.<random>.tmp` in the releases folder and is removed on failure.
 - A directory marker needs a trailing slash (`--marker assets/`). Without it the marker must be a file.
 - Version comparison is numeric on the three parts, so 0.10.0 sorts above 0.9.0.
+- Three beta builds of one app (15 files, 41,026,579 bytes unpacked) come to 13,698,897 bytes deduplicated, in 113 entries.
+- Other tools that open a rollup with `zipfile` directly see only `README.txt` and `.rollup/`. They should use `release_rollup.Rollup`: `names()`, `files()`, `open(name)`.
+- `Rollup` on a deduplicated zip reads the manifest on every open, parsed once per content through a small cache. `verify` opens the source zip once per file, so this matters.
+- The temporary files of a write are `.<target>.<random>.tmp`, `.tmp.spool/` and `.tmp.plain.<random>.tmp`. A killed run can leave them behind; the tool ignores them.
+- `restore` work folders are named `.rollup-restore.<random>.tmp`, in the `--out` folder.
+- `upgrade` leaves `.<zip>.upgrade-old` next to a zip when a run dies between the rename and the trash. The next `upgrade` trashes it once the zip in place proves all its files.
+- A reader that doesn't want this package as a dependency can read `.rollup/MANIFEST.json` with the standard library. The file list is `files[].path`. The bytes are a blob, or a skeleton plus blobs, proved by the `sha256` of the entry.

@@ -1,0 +1,10 @@
+# Tests that run on one host only: <test id><TAB><linux|windows>. Every other test runs on both hosts
+# and checks the behavior of the host it runs on. test_hosts.py checks this file.
+test_archive.Safety.test_linux_archives_names_that_differ_only_in_case	linux
+test_archive.Safety.test_linux_archives_reserved_names_on_disk_with_a_warning	linux
+test_archive.Safety.test_linux_refuses_hostile_names_on_disk	linux
+test_dedupe.Hostile.test_linux_keeps_names_only_windows_minds	linux
+test_dedupe.Hostile.test_name_a_rollup_cannot_hold_keeps_the_sources	linux
+test_dedupe.Paths.test_long_path_is_left_alone_off_windows	linux
+test_windows.Names.test_linux_rolls_up_folders_holding_such_names	linux
+test_dedupe.Paths.test_long_path_prefix_on_windows	windows
