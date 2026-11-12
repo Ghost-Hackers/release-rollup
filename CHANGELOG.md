@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- `tools/e2e.sh` runs the end-to-end checks a release goes through against the release zip, with `--cross` for a 0.1.x zip and `--self-check` to prove that a changed byte fails them.
+
 ## [0.2.0-beta.1] - 2026-11-12
 
 ### Added

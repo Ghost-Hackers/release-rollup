@@ -80,6 +80,15 @@ bash tools/check.sh
 
 runs the unit tests and byte-compiles the package. On Windows use `PY="py -3.14" bash tools/check.sh` from Git Bash.
 
+`tools/e2e.sh` runs the end-to-end checks a release goes through, on a built release zip:
+
+```
+bash tools/e2e.sh release-rollup-0.2.0.zip [--cross release-rollup-0.1.0.zip]
+bash tools/e2e.sh --self-check release-rollup-0.2.0.zip
+```
+
+It prints one PASS or FAIL line per check and exits 0 only when none failed. `--cross` adds the checks against a 0.1.x release, and `--self-check` makes sure a zip with a changed byte fails.
+
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE). Copies and changed versions have to keep the license and the credit in [NOTICE](NOTICE).

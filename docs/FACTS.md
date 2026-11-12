@@ -21,6 +21,16 @@ bash tools/check.sh
 
 On Windows `python3` is the Microsoft Store shortcut, so pass the real interpreter: `PY="py -3.14" bash tools/check.sh` (Git Bash).
 
+End-to-end checks on a release zip (0.2.0 or newer; the zip is unpacked into a temp folder):
+
+```
+bash tools/e2e.sh release-rollup-<version>.zip
+bash tools/e2e.sh release-rollup-<version>.zip --cross release-rollup-0.1.0.zip
+bash tools/e2e.sh --self-check release-rollup-<version>.zip
+```
+
+On Windows from Git Bash set `PY="py -3.14"` first. A SHA256SUMS file next to the zip is verified if present. The gio trash checks write under `~/.cache/release-rollup-e2e` and trash it afterwards; without gio the script prints an INFO line, since the no-gio refusal is that system's trash check.
+
 Run from a checkout without installing:
 
 ```
