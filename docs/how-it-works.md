@@ -144,7 +144,7 @@ A plain rollup is rebuilt as a deduplicated one the same way when a new member a
 - Name clashes in `--trash-dir` get a numeric suffix, so earlier trashed items are never overwritten.
 - `--dry-run` reads the folder and prints the plan. It writes and moves nothing, and it does not need `gio` or `--trash-dir`.
 
-## Tester builds (pre command)
+## Tester builds and the pre command
 
 `release-rollup pre` works on a project's `prereleases/` folder, separate from the releases folder that `run` handles. It holds `alpha/`, `beta/` and `rc/`, and in each of them one folder per tester build, named `v<x.y.z>-<stage>.<n>`. A build counts as finished when it holds `PRERELEASE.json` and `SHA256SUMS`. Unfinished folders are not touched, so the previous finished build stays unpacked while a new one is still being written.
 

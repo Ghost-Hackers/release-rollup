@@ -1,12 +1,16 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.egg-info/
 build/
 dist/
 .venv/
+
+# Release builds, published on GitHub and kept locally
+releases/
+prereleases/
+
+# Local working files
 var/
 archive/
 *.bak*
-prereleases/
-releases/*
-!releases/README.md
