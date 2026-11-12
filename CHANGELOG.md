@@ -4,6 +4,11 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- Release zips are built on GitHub from the version tag and come with a signed attestation, so `gh attestation verify` can prove which commit a download was built from. `SECURITY.md` explains how to check one.
+- `tools/build_release.py` builds a release zip from a commit. Two builds of one commit are byte for byte the same, so anyone can rebuild a release and compare the sha256.
+
 ## [0.2.0-beta.2] - 2026-11-12
 
 ### Added
