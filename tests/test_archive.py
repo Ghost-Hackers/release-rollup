@@ -1,5 +1,4 @@
 """The archive command: the plain files of one folder roll into one deduped archive."""
-import io
 import json
 import os
 import random
@@ -10,40 +9,41 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Mapping
 from unittest import mock
 
 import hostcat
 import test_dedupe as TD
 from release_rollup import cli, container, core
 from release_rollup.container import MANIFEST, README, Rollup, parse_manifest, path_problem, restore
-from release_rollup.core import Fail, archive
+from release_rollup.core import Fail, Src, archive
 
 QUIET = TD.QUIET
 OUT = 'archive.zip'
 
 
-def blob(seed, n=40000):
+def blob(seed: int, n: int = 40000) -> bytes:
     return random.Random(seed).randbytes(n)
 
 
-def make_zip(path, members):
+def make_zip(path: str, members: Mapping[str, bytes]) -> None:
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
         for name, data in members.items():
             z.writestr(zipfile.ZipInfo(name, (2026, 1, 2, 3, 4, 6)), data)
 
 
-def write(path, data):
+def write(path: str, data: bytes) -> None:
     with open(path, 'wb') as f:
         f.write(data)
 
 
-def read(path):
+def read(path: str) -> bytes:
     with open(path, 'rb') as f:
         return f.read()
 
 
 class Base(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory(prefix='rollup-archive-')
         self.addCleanup(self._td.cleanup)
         self.tmp = self._td.name
@@ -51,41 +51,41 @@ class Base(unittest.TestCase):
         self.out = os.path.join(self.tmp, 'out')
         os.makedirs(self.root)
         self.trash_dir = os.path.join(self.tmp, 'trash')
-        self.said = []
+        self.said: list[str] = []
 
-    def say(self, line):
+    def say(self, line: str) -> None:
         self.said.append(line)
 
-    def run_archive(self, **kw):
+    def run_archive(self, dry: bool = False) -> int:
         self.said = []
-        return archive(self.root, OUT, trash=core.move_trash(self.trash_dir), say=self.say, **kw)
+        return archive(self.root, OUT, dry=dry, trash=core.move_trash(self.trash_dir), say=self.say)
 
-    def put(self, name, data):
+    def put(self, name: str, data: bytes) -> str:
         write(os.path.join(self.root, name), data)
         return TD.sha(data)
 
-    def target(self):
+    def target(self) -> str:
         return os.path.join(self.root, OUT)
 
-    def trashed(self):
+    def trashed(self) -> list[str]:
         return sorted(os.listdir(self.trash_dir)) if os.path.isdir(self.trash_dir) else []
 
-    def visible(self):
+    def visible(self) -> list[str]:
         return sorted(n for n in os.listdir(self.root) if not n.startswith('.'))
 
-    def hidden(self):
+    def hidden(self) -> list[str]:
         return sorted(n for n in os.listdir(self.root) if n.startswith('.'))
 
-    def restored(self):
+    def restored(self) -> dict[str, str]:
         shutil.rmtree(self.out, ignore_errors=True)
         restore(self.target(), out=self.out, say=QUIET)
         return TD.snapshot(self.out)
 
 
 class Rolling(Base):
-    def reports(self):
+    def reports(self) -> dict[str, str]:
         """Two report zips that share a runtime file, plus a log that is not a zip."""
-        want = {}
+        want: dict[str, str] = {}
         for i, tag in enumerate(('a', 'b')):
             name = 'outbox-2026110%dT0%d1910-%s.zip' % (i + 1, i + 1, tag)
             make_zip(os.path.join(self.root, name), {'runtime/py.bin': blob(1), 'report-%s.md' % tag: blob(10 + i, 2000)})
@@ -141,13 +141,13 @@ class Rolling(Base):
         # the same archive built from scratch is byte for byte the same
         scratch = os.path.join(self.tmp, 'scratch')
         os.makedirs(scratch)
-        for n, p in self.reports_again(scratch).items():
+        for _ in self.reports_again(scratch).items():
             pass
         write(os.path.join(scratch, 'later.zip'), blob(7, 1500))
         archive(scratch, OUT, trash=core.move_trash(os.path.join(self.tmp, 't2')), say=QUIET)
         self.assertEqual(read(os.path.join(scratch, OUT)), read(self.target()))
 
-    def reports_again(self, dest):
+    def reports_again(self, dest: str) -> dict[str, str]:
         for i, tag in enumerate(('a', 'b')):
             name = 'outbox-2026110%dT0%d1910-%s.zip' % (i + 1, i + 1, tag)
             make_zip(os.path.join(dest, name), {'runtime/py.bin': blob(1), 'report-%s.md' % tag: blob(10 + i, 2000)})
@@ -256,9 +256,9 @@ class Safety(Base):
         self.put('b.bin', b'b' * 900)
         before = {n: read(os.path.join(self.root, n)) for n in self.visible()}
         real = core.sha_of
-        calls = []
+        calls: list[Src] = []
 
-        def lying(src):
+        def lying(src: Src) -> str:
             calls.append(src)
             return 'f' * 64 if len(calls) > 1 else real(src)
         with mock.patch.object(core, 'sha_of', lying):
@@ -306,12 +306,12 @@ class Safety(Base):
                     archive(d, OUT, trash=core.move_trash(self.trash_dir), say=QUIET)
                 self.assertEqual(sorted(os.listdir(d)), sorted(['ok.bin', bad]))
 
-    def archive_holding(self, name, data=b'q' * 900):
+    def archive_holding(self, name: str, data: bytes = b'q' * 900) -> bytes:
         """An archive in self.root whose manifest names a file `name`, as an archive made elsewhere could."""
         self.put('x.bin', data)
         self.run_archive()
 
-        def edit(m):
+        def edit(m: TD.RawManifest) -> None:
             for e in m['files']:
                 if e['path'] == 'x.bin':
                     e['path'] = name
@@ -346,7 +346,7 @@ class Safety(Base):
                 d = os.path.join(self.tmp, 'w_' + bad.replace('.', '_'))
                 os.makedirs(d)
                 write(os.path.join(d, bad), b'q' * 900)
-                said = []
+                said: list[str] = []
                 archive(d, OUT, trash=core.move_trash(self.trash_dir), say=said.append)
                 self.assertTrue(any(s.startswith('warning: 1 name Windows cannot hold') for s in said), said)
                 self.assertEqual(os.listdir(d), [OUT])
@@ -422,7 +422,7 @@ class Safety(Base):
     def test_restore_check_and_unzip_readme(self):
         self.put('a.bin', b'a' * 900)
         self.run_archive()
-        said = []
+        said: list[str] = []
         restore(self.target(), check_only=True, say=said.append)
         self.assertRegex(said[0], 'every file matches')
         with zipfile.ZipFile(self.target()) as z:

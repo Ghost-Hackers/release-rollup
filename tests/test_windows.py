@@ -9,6 +9,7 @@ import io
 import os
 import unittest
 import zipfile
+from collections.abc import Callable, Mapping
 from unittest import mock
 
 import hostcat
@@ -24,9 +25,9 @@ BAD = ('CON', 'COM1', 'aux.txt', 'aux.c', 'NUL', 'lpt3.log', 'trail.', 'trail ',
 FINE = ('console.txt', 'com10', 'auxiliary', 'v0.1.0-nul', 'null.txt')
 
 
-def tree_state(root):
+def tree_state(root: str) -> dict[str, str | None]:
     """Names and sha256 of every file and folder below root."""
-    out = {}
+    out: dict[str, str | None] = {}
     for d, dirs, fs in os.walk(root):
         for name in dirs:
             out[os.path.relpath(os.path.join(d, name), root)] = None
@@ -36,7 +37,7 @@ def tree_state(root):
     return out
 
 
-def zip_entries(path, entries):
+def zip_entries(path: str, entries: Mapping[str, bytes]) -> None:
     """A plain zip with these {entry name: bytes}. The names go into the zip as they are, on any host."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -44,9 +45,9 @@ def zip_entries(path, entries):
             z.writestr(name, entries[name])
 
 
-def zip_rollup(path, members):
+def zip_rollup(path: str, members: Mapping[str, Mapping[str, bytes] | None]) -> str:
     """A plain rollup zip as an older run or another machine left it. members: {version: extra assets or None}."""
-    entries = {}
+    entries: dict[str, bytes] = {}
     for v, extra in members.items():
         files = {'RELEASE_NOTES.md': b'notes ' + v.encode(), 'SHA256SUMS': b'sums ' + v.encode(), 'assets/app.zip': TD.app(v)}
         files.update(extra or {})
@@ -56,18 +57,18 @@ def zip_rollup(path, members):
 
 
 class Names(TD.Base):
-    def releases(self, extra):
+    def releases(self, extra: Mapping[str, bytes]) -> None:
         """0.1.0 and 0.1.1 sit in a plain 0.1.zip, the odd names in 0.1.0; 0.1.2 and 0.2.0 are folders.
         A run adds 0.1.2 to 0.1.zip, so it reads every name of the zip first."""
         zip_rollup(os.path.join(self.root, '0.1.zip'), {'0.1.0': extra, '0.1.1': None})
         for v in ('0.1.2', '0.2.0'):
             TD.release(self.root, v, TD.app(v))
 
-    def trashed(self):
+    def trashed(self) -> list[str]:
         d = os.path.join(self.tmp, 'trash')
         return os.listdir(d) if os.path.isdir(d) else []
 
-    def per_host(self, run, pattern):
+    def per_host(self, run: Callable[[], object], pattern: str) -> str:
         """On Windows run() raises Fail matching pattern and nothing moves; elsewhere it says one warning and goes on.
         Returns the error or the warning."""
         before = tree_state(self.root)
@@ -156,7 +157,7 @@ class Names(TD.Base):
         self.assertIn('0.2.zip: v0.2.1/assets/CON', msg)
         self.assertEqual(os.path.isfile(os.path.join(self.root, '0.1.zip')), not WINDOWS)
 
-    def build(self, name, extra=None):
+    def build(self, name: str, extra: Mapping[str, bytes] | None = None) -> None:
         d = os.path.join(self.root, 'beta', name)
         os.makedirs(os.path.join(d, 'assets'))
         for f in ('PRERELEASE.json', 'SHA256SUMS'):
@@ -169,7 +170,7 @@ class Names(TD.Base):
                 w.write(v)
 
     def test_pre_refuses_on_windows_and_warns_elsewhere(self):
-        entries = {}
+        entries: dict[str, bytes] = {}
         for i in (1, 2):
             nm = 'v1.0.0-beta.%d' % i
             entries.update({nm + '/PRERELEASE.json': nm.encode(), nm + '/SHA256SUMS': nm.encode(),
@@ -184,18 +185,18 @@ class Names(TD.Base):
         self.assertIn('beta/v1.0.0-beta.x.zip: v1.0.0-beta.2/assets/aux.txt', msg)
         self.assertEqual(os.path.isdir(os.path.join(self.root, 'beta', 'v1.0.0-beta.3')), WINDOWS)
 
-    def plain_rollup(self, extra):
+    def plain_rollup(self, extra: Mapping[str, bytes]) -> str:
         return zip_rollup(os.path.join(self.root, '0.1.zip'), {'0.1.0': extra, '0.1.1': None, '0.1.2': None})
 
-    def plain_rollup_second(self):
+    def plain_rollup_second(self) -> str:
         for v in ('0.3.0', '0.3.1', '0.3.2', '0.4.0'):
             TD.release(self.root, v, TD.app(v))
         self.run_apply(dedupe=False)
         return os.path.join(self.root, '0.3.zip')
 
-    def up(self, **kw):
+    def up(self, dry: bool = False) -> int:
         self.said = []
-        return upgrade(self.root, trash=move_trash(os.path.join(self.tmp, 'old-zips')), say=self.say, **kw)
+        return upgrade(self.root, dry=dry, trash=move_trash(os.path.join(self.tmp, 'old-zips')), say=self.say)
 
     def test_upgrade_refuses_such_a_zip_on_windows_and_warns_elsewhere(self):
         z = self.plain_rollup({'assets/NUL': b'x'})
@@ -231,13 +232,13 @@ class Names(TD.Base):
 
 
 class Command(TD.Base):
-    def run_cli(self, *argv):
+    def run_cli(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = cli.main(list(argv))
         return code, out.getvalue(), err.getvalue()
 
-    def releases(self, extra=None):
+    def releases(self, extra: Mapping[str, bytes] | None = None) -> None:
         for v in ('0.1.0', '0.1.1', '0.1.2', '0.2.0'):
             TD.release(self.root, v, TD.app(v), extra if v == '0.1.0' else None)
 
@@ -277,19 +278,19 @@ class Command(TD.Base):
                 with self.subTest(cmd, exc=repr(exc)):
                     fn = {'run': 'apply', 'pre': 'apply_pre', 'upgrade': 'upgrade'}[cmd]
                     with mock.patch.object(cli, fn, side_effect=exc):
-                        code, out, err = self.run_cli(cmd, '--root', self.root)
+                        code, _, err = self.run_cli(cmd, '--root', self.root)
                     self.assertEqual(code, 1)
                     self.assertTrue(err.startswith('error: '), err)
                     self.assertEqual(err.count('\n'), 1)
                     self.assertNotIn('Traceback', err)
                     self.assertNotIn('Errno', err)
-        code, out, err = self.run_cli('run', '--root', self.root, '--trash-dir', os.path.join(self.tmp, 't'))  # the same folder still works
+        code, _, err = self.run_cli('run', '--root', self.root, '--trash-dir', os.path.join(self.tmp, 't'))  # the same folder still works
         self.assertEqual(code, 0)
 
     def test_restore_errors_are_clean_too(self):
         z = self.rollup()
         with mock.patch.object(cli, 'restore', side_effect=FileNotFoundError(2, 'No such file or directory', 'out\\NUL.')):
-            code, out, err = self.run_cli('restore', z, '--out', self.out)
+            code, _, err = self.run_cli('restore', z, '--out', self.out)
         self.assertEqual(code, 1)
         self.assertIn('NUL.: No such file or directory', err)
         self.assertEqual(err.count('\n'), 1)

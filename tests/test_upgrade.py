@@ -1,13 +1,13 @@
 """The upgrade command: plain rollup zips become deduped ones, or stay exactly as they are."""
 import os
 import shutil
-import signal
 import struct
 import subprocess
 import sys
 import unittest
 import zipfile
 import zlib
+from collections.abc import Buffer
 from unittest import mock
 
 import hostcat
@@ -19,17 +19,17 @@ from release_rollup.core import Fail, upgrade
 QUIET = TD.QUIET
 
 
-def read(path):
+def read(path: str) -> bytes:
     with open(path, 'rb') as f:
         return f.read()
 
 
-def write(path, data):
+def write(path: str, data: Buffer) -> None:
     with open(path, 'wb') as f:
         f.write(data)
 
 
-def cut_short(path, name):
+def cut_short(path: str, name: str) -> None:
     """Add an entry called name that reads past the end of the zip, so reading it raises a bare EOFError.
 
     It reuses the local header of the last member in the central directory and claims more stored bytes than the
@@ -42,8 +42,9 @@ def cut_short(path, name):
     """
     data = read(path)
     eocd = data.rindex(b'PK\x05\x06')
-    count, cd_size, cd_off = struct.unpack('<HII', data[eocd + 10:eocd + 20])
-    entries, pos = [], cd_off
+    count, _, cd_off = struct.unpack('<HII', data[eocd + 10:eocd + 20])
+    entries: list[bytes] = []
+    pos = cd_off
     for _ in range(count):
         nlen, elen, clen = struct.unpack('<HHH', data[pos + 28:pos + 34])
         entries.append(data[pos:pos + 46 + nlen + elen + clen])
@@ -65,19 +66,19 @@ def cut_short(path, name):
 
 
 class Upgrade(TD.Base):
-    def plain(self, name='0.1.zip'):
+    def plain(self, name: str = '0.1.zip') -> str:
         """A plain rollup of three releases that share a big file."""
         return self.rollup(zip_name=name, dedupe=False)
 
-    def up(self, **kw):
+    def up(self, dry: bool = False) -> int:
         self.said = []
-        return upgrade(self.root, trash=core.move_trash(os.path.join(self.tmp, 'old-zips')), say=self.say, **kw)
+        return upgrade(self.root, dry=dry, trash=core.move_trash(os.path.join(self.tmp, 'old-zips')), say=self.say)
 
-    def trashed(self):
+    def trashed(self) -> list[str]:
         d = os.path.join(self.tmp, 'old-zips')
         return sorted(os.listdir(d)) if os.path.isdir(d) else []
 
-    def hidden(self):
+    def hidden(self) -> list[str]:
         return [n for n in os.listdir(self.root) if n.startswith('.')]
 
     def test_plain_becomes_deduped_and_every_file_is_proved(self):
@@ -229,7 +230,7 @@ core.upgrade(%r, trash=core.move_trash(%r), say=lambda *_: None)
         z = self.plain()
         old = TD.sha_file(z)
 
-        def refuse(p):
+        def refuse(p: str) -> None:
             raise Fail('trash is full')
         with self.assertRaisesRegex(Fail, 'upgraded, but its old copy'):
             upgrade(self.root, trash=refuse, say=QUIET)
@@ -242,7 +243,7 @@ core.upgrade(%r, trash=core.move_trash(%r), say=lambda *_: None)
         self.assertTrue(TD.is_deduped(z))
 
     def test_a_leftover_that_does_not_match_is_not_trashed(self):
-        z = self.plain()
+        self.plain()
         self.up()
         left = os.path.join(self.root, '.0.1.zip.upgrade-old')
         with zipfile.ZipFile(left, 'w') as w:

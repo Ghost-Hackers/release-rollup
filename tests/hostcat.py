@@ -5,19 +5,20 @@ runs on both and checks the behavior of the host it runs on. Each test module se
 so a test meant for the other host is left out of the run (it is not a skip: it never runs here).
 """
 import os
+import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CATALOGUE = os.path.join(HERE, 'hosts.tsv')
 HOSTS = ('linux', 'windows')
 
 
-def this_host():
+def this_host() -> str:
     return 'windows' if os.name == 'nt' else 'linux'
 
 
-def read_catalogue(path=CATALOGUE):
+def read_catalogue(path: str = CATALOGUE) -> list[tuple[int, str, str | None]]:
     """[(line number, test id, host)] for every row; blank lines and # comments are left out."""
-    rows = []
+    rows: list[tuple[int, str, str | None]] = []
     with open(path, encoding='utf-8') as f:
         for i, line in enumerate(f, 1):
             line = line.rstrip('\r\n')
@@ -28,13 +29,12 @@ def read_catalogue(path=CATALOGUE):
     return rows
 
 
-def other_host_tests():
+def other_host_tests() -> set[str]:
     here = this_host()
     return {tid for _, tid, host in read_catalogue() if host != here}
 
 
-def _keep(suite, drop):
-    import unittest
+def _keep(suite: unittest.TestSuite, drop: set[str]) -> unittest.TestSuite:
     out = unittest.TestSuite()
     for t in suite:
         if isinstance(t, unittest.TestSuite):
@@ -44,5 +44,5 @@ def _keep(suite, drop):
     return out
 
 
-def load_tests(loader, standard_tests, pattern):
+def load_tests(loader: unittest.TestLoader, standard_tests: unittest.TestSuite, pattern: str | None) -> unittest.TestSuite:
     return _keep(standard_tests, other_host_tests())

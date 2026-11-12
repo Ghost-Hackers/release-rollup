@@ -26,6 +26,6 @@ where = ["src"]
 release_rollup = ["VERSION"]
 
 [tool.pyright]
-include = ["src"]
+include = ["src", "tests"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"

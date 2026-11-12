@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Container, Iterable
+from typing import TypedDict, Unpack
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
@@ -12,13 +14,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 import hostcat
 from release_rollup import core  # noqa: E402
 from release_rollup.cli import main
-from release_rollup.core import Fail, apply, make_trash, move_trash, plan
+from release_rollup.core import Fail, Files, apply, make_trash, move_trash, plan
+from test_dedupe import ApplyOpts
 
 FILES = ('RELEASE_NOTES.md', 'SHA256SUMS', 'assets/pack.bin')
-QUIET = lambda *_: None
 
 
-def fake(root, ver, payload=None):
+def QUIET(*_: object) -> None:
+    return None
+
+
+def fake(root: str, ver: str, payload: str | None = None) -> None:
     d = os.path.join(root, 'v' + ver)
     os.makedirs(os.path.join(d, 'assets'))
     with open(os.path.join(d, 'RELEASE_NOTES.md'), 'w') as f:
@@ -30,7 +36,7 @@ def fake(root, ver, payload=None):
 
 
 class Base(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory(prefix='rollup-test-')
         self.addCleanup(self._td.cleanup)
         self.root = os.path.join(self._td.name, 'releases')
@@ -38,13 +44,13 @@ class Base(unittest.TestCase):
         os.makedirs(self.root)
         self.trash = move_trash(self.trash_dir)
 
-    def run_apply(self, **kw):
+    def run_apply(self, **kw: Unpack[ApplyOpts]) -> int:
         return apply(self.root, trash=self.trash, say=QUIET, **kw)
 
-    def ls(self, skip=()):
+    def ls(self, skip: Container[str] = ()) -> list[str]:
         return sorted(x for x in os.listdir(self.root) if x not in skip)
 
-    def trashed(self):
+    def trashed(self) -> list[str]:
         return sorted(os.listdir(self.trash_dir)) if os.path.isdir(self.trash_dir) else []
 
 
@@ -120,7 +126,7 @@ class Safety(Base):
         fake(self.root, '0.1.1')
         real = core.write_zip
 
-        def broken(t, files):
+        def broken(t: str, files: Files) -> None:
             real(t, files)
             with open(t, 'r+b') as f:
                 f.seek(40)
@@ -143,7 +149,7 @@ class Safety(Base):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
             fake(self.root, v)
         before = self.ls()
-        lines = []
+        lines: list[str] = []
         self.assertEqual(apply(self.root, dry=True, say=lines.append), 1)
         self.assertEqual(self.ls(), before)
         self.assertEqual(self.trashed(), [])
@@ -277,7 +283,7 @@ class Output(Base):
         for i in range(1000):
             with open(os.path.join(self.root, 'v0.1.0', 'assets', 'f%d' % i), 'w') as f:
                 f.write('x')
-        lines = []
+        lines: list[str] = []
         apply(self.root, trash=self.trash, say=lines.append)
         self.assertIn('1,003 files', lines[0])
         self.assertEqual(core.n(1234567), '1,234,567')
@@ -309,11 +315,11 @@ if __name__ == '__main__':
     unittest.main()
 
 
-def rc_dir(root, name):
+def rc_dir(root: str, name: str) -> None:
     os.makedirs(os.path.join(root, name, 'assets'))
 
 
-def rc_zip(root, name):
+def rc_zip(root: str, name: str) -> None:
     with zipfile.ZipFile(os.path.join(root, name), 'w') as z:
         z.writestr('x.txt', 'rc')
 
@@ -435,12 +441,16 @@ class RcCleanup(Base):
         # alpha < beta < rc < final, build number compared as a number
         order = ['v0.9.0', '1.0.0-alpha.2', '1.0.0-alpha.10', 'v1.0.0-beta.1', '1.0.0-beta.3', '1.0.0-rc.1', 'v1.0.0-rc.9.zip',
                  '1.0.0-rc.10', 'v1.0.0', 'v1.0.0.zip', '1.0.1-alpha.1', '1.0.1']
-        keys = [core.vkey(x) for x in order]
+        def key(name: str) -> core.VKey:
+            k = core.vkey(name)
+            assert k is not None, name
+            return k
+        keys = [key(x) for x in order]
         self.assertEqual(keys, sorted(keys))
-        self.assertLess(core.vkey('1.0.0-rc.9'), core.vkey('1.0.0-rc.10'))
-        self.assertLess(core.vkey('1.0.0-alpha.2'), core.vkey('1.0.0-alpha.10'))
-        self.assertLess(core.vkey('1.0.0-beta.9'), core.vkey('1.0.0-rc.1'))
-        self.assertLess(core.vkey('1.0.0-rc.99'), core.vkey('1.0.0'))
+        self.assertLess(key('1.0.0-rc.9'), key('1.0.0-rc.10'))
+        self.assertLess(key('1.0.0-alpha.2'), key('1.0.0-alpha.10'))
+        self.assertLess(key('1.0.0-beta.9'), key('1.0.0-rc.1'))
+        self.assertLess(key('1.0.0-rc.99'), key('1.0.0'))
         self.assertEqual(core.vkey('1.0.0'), (1, 0, 0, 3, 0))
         self.assertIsNone(core.vkey('1.0.0-gamma.1'))
         self.assertIsNone(core.vkey('notes'))
@@ -465,7 +475,7 @@ class RcCleanup(Base):
         fake(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         before = self.ls()
-        out = []
+        out: list[str] = []
         apply(self.root, dry=True, say=out.append)
         self.assertEqual(self.ls(), before)
         self.assertEqual(out, ['would trash 0.1.0-rc.1 (release 0.1.0 is published)'])
@@ -473,7 +483,7 @@ class RcCleanup(Base):
     def test_real_run_prints_trashed(self):
         fake(self.root, '0.1.0')
         rc_dir(self.root, 'v0.1.0-rc.1')
-        out = []
+        out: list[str] = []
         apply(self.root, trash=self.trash, say=out.append)
         self.assertEqual(out, ['trashed v0.1.0-rc.1'])
 
@@ -481,7 +491,7 @@ class RcCleanup(Base):
         fake(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         self.run_apply()
-        out = []
+        out: list[str] = []
         apply(self.root, trash=self.trash, say=out.append)
         self.assertEqual(out, ['nothing to do'])
         self.assertEqual(self.trashed(), ['0.1.0-rc.1'])
@@ -573,7 +583,7 @@ class ZipNewest(Base):
         self.assertEqual(self.ls(), ['v0.1.0.zip'])
 
 
-def pre_build(root, name, payload=None, finished=True):
+def pre_build(root: str, name: str, payload: str | None = None, finished: bool = True) -> str:
     """A tester build in prereleases/<stage>/<name>/ with its marker files."""
     stage = name.split('-')[1].split('.')[0]
     d = os.path.join(root, stage, name)
@@ -589,20 +599,26 @@ def pre_build(root, name, payload=None, finished=True):
     return d
 
 
+class PreOpts(TypedDict, total=False):
+    dry: bool
+    markers: Iterable[str]
+    dedupe: bool
+
+
 class Prereleases(Base):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self.pre = os.path.join(self._td.name, 'prereleases')
         os.makedirs(self.pre)
 
-    def run_pre(self, current=None, **kw):
+    def run_pre(self, current: str | None = None, **kw: Unpack[PreOpts]) -> int:
         return core.apply_pre(self.pre, current=current, trash=self.trash, say=QUIET, **kw)
 
-    def tree(self):
+    def tree(self) -> dict[str, list[str]]:
         return {st: sorted(os.listdir(os.path.join(self.pre, st)))
                 for st in sorted(os.listdir(self.pre)) if os.path.isdir(os.path.join(self.pre, st))}
 
-    def members(self, rel):
+    def members(self, rel: str) -> list[str]:
         with zipfile.ZipFile(os.path.join(self.pre, rel)) as z:
             return sorted({i.split('/')[0] for i in z.namelist()})
 

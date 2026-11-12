@@ -16,6 +16,8 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Buffer, Callable, Container, Iterable, Mapping
+from typing import BinaryIO, NotRequired, TypedDict, Unpack, cast
 from unittest import mock
 
 import hostcat
@@ -25,22 +27,70 @@ SRC = os.path.join(HERE, '..', 'src')
 sys.path.insert(0, SRC)
 
 from release_rollup import __version__, cli, container, core  # noqa: E402
-from release_rollup.container import (BLOB_DIR, DEFAULT_MAX_SIZE, MANIFEST, README, SKELETON_DIR, Rollup,  # noqa: E402
+from release_rollup.container import (BLOB_DIR, MANIFEST, README, SKELETON_DIR, Rollup,  # noqa: E402
                                       long_path, restore, split_zip)
-from release_rollup.core import Fail, apply, apply_pre, move_trash, scan, verify  # noqa: E402
-
-QUIET = lambda *_: None
+from release_rollup.core import Fail, Files, Trash, apply, apply_pre, move_trash, scan, verify  # noqa: E402
 
 
-def noise(size, seed=1):
+def QUIET(*_: object) -> None:
+    return None
+
+
+type Ref = list[int | str]  # [offset, length, blob] as the JSON holds it
+
+
+class RawEntry(TypedDict):
+    """A manifest file entry as the JSON holds it. Lists both kinds' fields; a test reads only its entry's kind."""
+    path: str
+    kind: str
+    size: int
+    sha256: str
+    blob: str
+    skeleton: str
+    skeleton_size: int
+    refs: list[Ref]
+
+
+class RawManifest(TypedDict):
+    """The parsed MANIFEST.json a forging test edits. format is loose so a test can break it."""
+    format: NotRequired[object]
+    tool: object
+    top: NotRequired[str]
+    files: list[RawEntry]
+
+
+type ManifestEdit = Callable[[RawManifest], object]
+
+
+class ApplyOpts(TypedDict, total=False):
+    dry: bool
+    markers: Iterable[str]
+    keep_rc: bool
+    zip_newest: bool
+    dedupe: bool
+
+
+class RestoreOpts(TypedDict, total=False):
+    check_only: bool
+    max_size: int
+
+
+class RewriteOpts(TypedDict, total=False):
+    change: Mapping[str, bytes]
+    manifest: ManifestEdit
+    drop: Container[str]
+    add: Iterable[tuple[str, bytes]]
+
+
+def noise(size: int, seed: int = 1) -> bytes:
     return random.Random(seed).getrandbits(8 * size).to_bytes(size, 'little') if size else b''
 
 
-def sha(data):
+def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def kill_plan():
+def kill_plan() -> tuple[str, int]:
     """(python line that kills the running process at once, return code subprocess reports) for this host.
     Linux: SIGKILL, reported as -9. Windows has no SIGKILL; there os.kill with any other signal number calls
     TerminateProcess and the number becomes the exit code (Python docs, os.kill), so SIGTERM is reported as 15."""
@@ -49,25 +99,25 @@ def kill_plan():
     return 'os.kill(os.getpid(), signal.SIGKILL)', -signal.SIGKILL
 
 
-def sha_file(path):
+def sha_file(path: str) -> str:
     with open(path, 'rb') as f:
         return sha(f.read())
 
 
-def inner_zip(members, method=zipfile.ZIP_DEFLATED, comment=b'', prefix=b'', trailing=b'', force_zip64=False,
-              streamed=False):
+def inner_zip(members: Mapping[str, bytes], method: int = zipfile.ZIP_DEFLATED, comment: bytes = b'', prefix: bytes = b'',
+              trailing: bytes = b'', force_zip64: bool = False, streamed: bool = False) -> bytes:
     """Bytes of a zip with these members. streamed writes through a pipe-like file, so data descriptors get used."""
     raw = io.BytesIO()
-    target = raw
+    target: io.RawIOBase | io.BytesIO = raw
     if streamed:
         class NoSeek(io.RawIOBase):
-            def writable(self):
+            def writable(self) -> bool:
                 return True
 
-            def write(self, b):
+            def write(self, b: Buffer, /) -> int:
                 return raw.write(b)
 
-            def seekable(self):
+            def seekable(self) -> bool:
                 return False
         target = NoSeek()
     with zipfile.ZipFile(target, 'w', method) as z:
@@ -80,7 +130,7 @@ def inner_zip(members, method=zipfile.ZIP_DEFLATED, comment=b'', prefix=b'', tra
     return prefix + raw.getvalue() + trailing
 
 
-def release(root, ver, app=None, extra=None):
+def release(root: str, ver: str, app: bytes | None = None, extra: Mapping[str, bytes] | None = None) -> str:
     """A published release folder: the three marker files plus these assets."""
     d = os.path.join(root, 'v' + ver)
     os.makedirs(os.path.join(d, 'assets'))
@@ -95,13 +145,13 @@ def release(root, ver, app=None, extra=None):
     return d
 
 
-def app(ver, shared=None):
+def app(ver: str, shared: bytes | None = None) -> bytes:
     """An inner zip with a big member every version shares and a small one of its own."""
     return inner_zip({'lib/runtime.bin': shared if shared is not None else noise(60000), 'version.txt': ver.encode() * 300})
 
 
-def snapshot(root):
-    out = {}
+def snapshot(root: str) -> dict[str, str]:
+    out: dict[str, str] = {}
     for d, _, fs in os.walk(root):
         for f in fs:
             p = os.path.join(d, f)
@@ -109,7 +159,8 @@ def snapshot(root):
     return out
 
 
-def rewrite(path, change=None, manifest=None, drop=(), add=None):
+def rewrite(path: str, change: Mapping[str, bytes] | None = None, manifest: ManifestEdit | None = None,
+            drop: Container[str] = (), add: Iterable[tuple[str, bytes]] | None = None) -> None:
     """Rewrite a rollup's entries: change maps an entry name to new bytes, manifest edits the parsed manifest."""
     with zipfile.ZipFile(path) as z:
         items = [(i.filename, z.read(i.filename)) for i in z.infolist()]
@@ -120,37 +171,40 @@ def rewrite(path, change=None, manifest=None, drop=(), add=None):
             if change and name in change:
                 data = change[name]
             if name == MANIFEST and manifest:
-                m = json.loads(data.decode())
-                data = manifest(m) or m
-                data = data if isinstance(data, bytes) else json.dumps(data).encode()
+                loaded: object = json.loads(data.decode())
+                if not isinstance(loaded, dict):
+                    raise AssertionError('%s is not a JSON object' % MANIFEST)
+                m = cast(RawManifest, loaded)
+                edited = manifest(m) or m
+                data = edited if isinstance(edited, bytes) else json.dumps(edited).encode()
             z.writestr(name, data)
         for name, data in (add or []):
             z.writestr(name, data)
 
 
-def is_deduped(path):
+def is_deduped(path: str) -> bool:
     with Rollup(path) as r:
         return r.deduped
 
 
 class Base(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._td = tempfile.TemporaryDirectory(prefix='rollup-dedupe-')
         self.addCleanup(self._td.cleanup)
         self.tmp = self._td.name
         self.root = os.path.join(self.tmp, 'releases')
         self.out = os.path.join(self.tmp, 'out')
         os.makedirs(self.root)
-        self.trash = move_trash(os.path.join(self.tmp, 'trash'))
-        self.said = []
+        self.trash: Trash = move_trash(os.path.join(self.tmp, 'trash'))
+        self.said: list[str] = []
 
-    def say(self, line):
+    def say(self, line: str) -> None:
         self.said.append(line)
 
-    def run_apply(self, **kw):
+    def run_apply(self, **kw: Unpack[ApplyOpts]) -> int:
         return apply(self.root, trash=self.trash, say=self.say, **kw)
 
-    def rollup(self, *vers, zip_name='0.1.zip', **kw):
+    def rollup(self, *vers: str, zip_name: str = '0.1.zip', **kw: Unpack[ApplyOpts]) -> str:
         """Three releases sharing content rolled into 0.1.zip, with 0.2.0 as the newest."""
         for v in vers or ('0.1.0', '0.1.1', '0.1.2'):
             release(self.root, v, app(v))
@@ -158,7 +212,7 @@ class Base(unittest.TestCase):
         self.run_apply(**kw)
         return os.path.join(self.root, zip_name)
 
-    def assertRefused(self, path, pattern=None, **kw):
+    def assertRefused(self, path: str, pattern: str | None = None, **kw: Unpack[RestoreOpts]) -> str:
         """restore refuses this rollup and leaves no output at all."""
         with self.assertRaises(Fail) as cm:
             restore(path, out=self.out, say=QUIET, **kw)
@@ -396,7 +450,7 @@ class InnerZips(Base):
                         self.assertEqual(f.read(), data)
                 self.assertEqual(sorted(os.listdir(out)), ['v0.1.0', 'v0.1.1'])
 
-    def split(self, data):
+    def split(self, data: bytes) -> list[tuple[int, int, bool]] | None:
         p = os.path.join(self.tmp, 'inner.bin')
         with open(p, 'wb') as f:
             f.write(data)
@@ -405,6 +459,7 @@ class InnerZips(Base):
     def test_split_finds_the_streams(self):
         data = inner_zip({'a': noise(9000), 'b': noise(9000, 2), 'small': b'tiny'})
         cuts = self.split(data)
+        assert cuts is not None
         self.assertEqual(len(cuts), 2)
         for off, length, packed in cuts:
             self.assertTrue(packed)
@@ -416,9 +471,10 @@ class InnerZips(Base):
         self.assertIsNone(self.split(b'PK\x05\x06 not a zip'))
         self.assertIsNone(self.split(inner_zip({})))
 
-    def central_offsets(self, data):
+    def central_offsets(self, data: bytes) -> list[int]:
         """Offsets of the central directory records."""
-        out, i = [], data.find(b'PK\x01\x02')
+        out: list[int] = []
+        i = data.find(b'PK\x01\x02')
         while i >= 0:
             out.append(i)
             i = data.find(b'PK\x01\x02', i + 4)
@@ -456,7 +512,9 @@ class InnerZips(Base):
 
     def test_depth_one_only(self):
         nested = inner_zip({'inner.zip': inner_zip({'a': noise(9000)}, zipfile.ZIP_STORED)}, zipfile.ZIP_STORED)
-        self.assertEqual(len(self.split(nested)), 1)
+        cuts = self.split(nested)
+        assert cuts is not None
+        self.assertEqual(len(cuts), 1)
 
     def test_random_payloads_round_trip(self):
         for seed in range(12):
@@ -597,7 +655,7 @@ class Promises(Base):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
             release(self.root, v, app(v))
 
-        def broken(_):
+        def broken(_: str) -> None:
             raise Fail('trash failed')
         with self.assertRaises(Fail):
             apply(self.root, trash=broken, say=QUIET)
@@ -610,9 +668,9 @@ class Promises(Base):
     def test_verify_refuses_missing_and_extra_files(self):
         z = self.rollup()
         with Rollup(z) as r:
-            files = {name: ('zip', (z, name)) for name in r.files()}
+            files: Files = {name: ('zip', (z, name)) for name in r.files()}
         self.assertEqual(verify(z, files), '')
-        self.assertRegex(verify(z, dict(files, **{'v0.1.0/more': ('zip', (z, 'v0.1.0/SHA256SUMS'))})), 'missing')
+        self.assertRegex(verify(z, {**files, 'v0.1.0/more': ('zip', (z, 'v0.1.0/SHA256SUMS'))}), 'missing')
         fewer = dict(files)
         fewer.pop('v0.1.0/SHA256SUMS')
         self.assertRegex(verify(z, fewer), 'unexpected entry')
@@ -634,7 +692,7 @@ class Promises(Base):
 
     def test_tool_never_sees_rollup_internals_as_releases(self):
         z = self.rollup()
-        found, members = scan(self.root)
+        _, members = scan(self.root)
         self.assertEqual(members[z], [(0, 1, 0), (0, 1, 1), (0, 1, 2)])
 
     def test_zip_newest_dedupes_too(self):
@@ -646,7 +704,7 @@ class Promises(Base):
 
 
 class Pre(Base):
-    def build(self, stage, name, data):
+    def build(self, stage: str, name: str, data: bytes) -> None:
         d = os.path.join(self.root, stage, name)
         os.makedirs(os.path.join(d, 'assets'))
         for f, text in (('PRERELEASE.json', '{"v": "%s"}' % name), ('SHA256SUMS', name)):
@@ -702,7 +760,7 @@ class Pre(Base):
         apply_pre(self.root, current='1.0.0-beta.3', trash=self.trash, say=QUIET)
         z = os.path.join(self.root, 'beta', 'v1.0.0-beta.x.zip')
 
-        def retop(m):
+        def retop(m: RawManifest) -> None:
             m['files'][0]['path'] = m['files'][0]['path'].replace('v1.0.0-beta.1', 'v9.0.0-beta.1')
         rewrite(z, manifest=retop)
         before = snapshot(self.root)
@@ -714,12 +772,12 @@ class Pre(Base):
 class Hostile(Base):
     """A forged rollup is refused by name, on restore and by run, and nothing gets written."""
 
-    def forged(self, edit):
+    def forged(self, edit: ManifestEdit) -> str:
         z = self.rollup()
         rewrite(z, manifest=edit)
         return z
 
-    def entry(self, m, kind='zip-split'):
+    def entry(self, m: RawManifest, kind: str = 'zip-split') -> RawEntry:
         return next(e for e in m['files'] if e['kind'] == kind)
 
     def test_bad_paths_in_a_manifest(self):
@@ -732,7 +790,7 @@ class Hostile(Base):
                 os.makedirs(root)
                 self.root = root
 
-                def edit(m, bad=bad):
+                def edit(m: RawManifest, bad: str = bad) -> None:
                     self.entry(m)['path'] = bad
                 z = self.forged(edit)
                 self.assertRefused(z)
@@ -740,7 +798,7 @@ class Hostile(Base):
                     scan(root)
                 self.assertFalse(os.path.exists(os.path.join(self.tmp, 'evil')))
 
-    def refuse_edit(self, edit, pattern=None):
+    def refuse_edit(self, edit: ManifestEdit, pattern: str | None = None) -> None:
         root = os.path.join(self.tmp, 'c')
         shutil.rmtree(root, ignore_errors=True)
         os.makedirs(root)
@@ -754,9 +812,9 @@ class Hostile(Base):
         self.assertEqual(snapshot(root), before)
 
     def test_bad_manifest_structure(self):
-        cases = {
-            'duplicate path': lambda m: m['files'].append(dict(m['files'][0])),
-            'file and folder': lambda m: m['files'].append(dict(m['files'][0], path=m['files'][0]['path'] + '/below')),
+        cases: dict[str, ManifestEdit] = {
+            'duplicate path': lambda m: m['files'].append(m['files'][0].copy()),
+            'file and folder': lambda m: m['files'].append({**m['files'][0], 'path': m['files'][0]['path'] + '/below'}),
             'blob not hex': lambda m: self.entry(m, 'plain').update(blob='../../evil'),
             'upper-case blob': lambda m: self.entry(m, 'plain').update(blob='A' * 64),
             'sha with newline': lambda m: self.entry(m).update(sha256='a' * 64 + '\n'),
@@ -774,8 +832,9 @@ class Hostile(Base):
             'sizes disagree': lambda m: self.entry(m).update(size=self.entry(m)['size'] + 1),
             'skeleton size lies': lambda m: self.entry(m).update(skeleton_size=self.entry(m)['skeleton_size'] + 1,
                                                                   size=self.entry(m)['size'] + 1),
-            'not a list': lambda m: m.update(files='x'),
-            'entry not an object': lambda m: m['files'].append(3),
+            # The callback's return value replaces the manifest, so these two can hold what RawManifest can't.
+            'not a list': lambda m: dict(m, files='x'),
+            'entry not an object': lambda m: dict(m, files=[*m['files'], 3]),
             'format text': lambda m: m.update(format='1'),
             'format zero': lambda m: m.update(format=0),
             'format bool': lambda m: m.update(format=True),
@@ -793,7 +852,7 @@ class Hostile(Base):
             with self.subTest(raw[:10]):
                 self.refuse_edit(lambda m, raw=raw: raw)
 
-    def rewrite_outer(self, **kw):
+    def rewrite_outer(self, **kw: Unpack[RewriteOpts]) -> str:
         z = self.rollup()
         rewrite(z, **kw)
         return z
@@ -821,7 +880,7 @@ class Hostile(Base):
         rewrite(z, drop=[blob])
         self.assertRefused(z, re.escape(blob))
 
-    def hostile_plain(self, names):
+    def hostile_plain(self, names: Iterable[str]) -> str:
         z = os.path.join(self.root, 'hostile.zip')
         with zipfile.ZipFile(z, 'w') as zf:
             for name in names:
@@ -848,7 +907,7 @@ class Hostile(Base):
         self.assertLessEqual(set(os.listdir(self.root)), {'hostile.zip', 'out'})
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'evil')))
 
-    def assertBackslashStaysInside(self, z, bad):
+    def assertBackslashStaysInside(self, z: str, bad: str) -> None:
         """Windows zipfile reads a backslash as a slash, so the name is a plain file inside the release folder."""
         restore(z, out=self.out, say=QUIET)
         self.assertEqual(sorted(snapshot(self.out)), ['v0.1.0/evil', 'v0.1.0/good'])
@@ -859,7 +918,7 @@ class Hostile(Base):
         self.assertEqual(r.returncode, killed)
         self.assertEqual(killed, signal.SIGTERM if hostcat.this_host() == 'windows' else -9)
 
-    def patch_name(self, z, bad):
+    def patch_name(self, z: str, bad: str) -> None:
         with zipfile.ZipFile(z) as zf:
             got = zf.namelist()[1]
         if got != bad and len(got) == len(bad):
@@ -876,7 +935,7 @@ class Hostile(Base):
                 self.out = os.path.join(self.root, 'out')
                 z = self.rollup()
 
-                def edit(m, bad=bad):
+                def edit(m: RawManifest, bad: str = bad) -> None:
                     m['files'][0]['path'] = bad
                 rewrite(z, manifest=edit)
                 if hostcat.this_host() == 'windows':
@@ -888,8 +947,8 @@ class Hostile(Base):
     def test_windows_case_collision(self):
         z = self.rollup()
 
-        def edit(m):
-            m['files'].append(dict(m['files'][0], path=m['files'][0]['path'].upper().replace('V0', 'v0')))
+        def edit(m: RawManifest) -> None:
+            m['files'].append({**m['files'][0], 'path': m['files'][0]['path'].upper().replace('V0', 'v0')})
         rewrite(z, manifest=edit)
         if hostcat.this_host() == 'windows':
             self.assertRefused(z, 'twice')
@@ -986,11 +1045,13 @@ class Hostile(Base):
         # A small manifest asking for one blob many times: the sizes add up before any byte is read.
         z = self.rollup()
 
-        def edit(m):
+        def edit(m: RawManifest) -> None:
             e = self.entry(m)
             big = max(e['refs'], key=lambda r: r[1])
-            e['refs'] = [[i, big[1], big[2]] for i in range(min(e['skeleton_size'], 2000))]
-            e['size'] = e['skeleton_size'] + big[1] * len(e['refs'])
+            length = big[1]
+            assert isinstance(length, int)
+            e['refs'] = [[i, length, big[2]] for i in range(min(e['skeleton_size'], 2000))]
+            e['size'] = e['skeleton_size'] + length * len(e['refs'])
         rewrite(z, manifest=edit)
         with mock.patch.object(Rollup, 'check', side_effect=AssertionError('read it')):
             self.assertRefused(z, 'unpack to more', max_size=1 << 20)
@@ -1015,7 +1076,8 @@ class Hostile(Base):
 
 
 class Corruption(Base):
-    def blob_of(self, z, big=True):
+    @staticmethod
+    def blob_of(z: str, big: bool = True) -> zipfile.ZipInfo:
         with zipfile.ZipFile(z) as zf:
             blobs = [i for i in zf.infolist() if i.filename.startswith(BLOB_DIR)]
         blobs.sort(key=lambda i: i.file_size, reverse=big)
@@ -1054,11 +1116,14 @@ class Corruption(Base):
     def test_wrong_file_sha_is_named(self):
         z = self.rollup()
 
-        def edit(m):
+        victim = ''
+
+        def edit(m: RawManifest) -> None:
+            nonlocal victim
             m['files'][0]['sha256'] = 'd' * 64
-            self.victim = m['files'][0]['path']
+            victim = m['files'][0]['path']
         rewrite(z, manifest=edit)
-        self.assertRefused(z, re.escape(self.victim))
+        self.assertRefused(z, re.escape(victim))
 
     def test_truncated_rollup(self):
         z = self.rollup()
@@ -1124,17 +1189,17 @@ class Corruption(Base):
 class Failure(Base):
     """A write that stops at any point leaves the old rollup and the sources exactly as they were."""
 
-    def prepared(self):
+    def prepared(self) -> tuple[str, dict[str, str]]:
         z = self.rollup('0.1.0', '0.1.1')
         release(self.root, '0.1.2', app('0.1.2'))
         return z, snapshot(self.root)
 
-    def assertUntouched(self, before):
+    def assertUntouched(self, before: dict[str, str]) -> None:
         self.assertEqual(snapshot(self.root), before)
         self.assertEqual([n for n in os.listdir(self.root) if '.tmp' in n], [])
 
     def test_disk_full_while_writing(self):
-        z, before = self.prepared()
+        _, before = self.prepared()
         with mock.patch.object(container, 'write_container') as w, mock.patch.object(core, 'write_container', w):
             w.side_effect = OSError(errno.ENOSPC, 'No space left on device')
             with self.assertRaisesRegex(Fail, 'No space left.*sources kept'):
@@ -1142,11 +1207,12 @@ class Failure(Base):
         self.assertUntouched(before)
 
     def test_disk_full_midway_through_a_blob(self):
-        z, before = self.prepared()
-        real = container._copy_range
-        calls = []
+        _, before = self.prepared()
+        # Typed by hand: the helper is private, so it is read by name.
+        real: Callable[[BinaryIO, int, int, Callable[[bytes], object]], None] = getattr(container, '_copy_range')
+        calls: list[int] = []
 
-        def full(f, offset, length, sink):
+        def full(f: BinaryIO, offset: int, length: int, sink: Callable[[bytes], object]) -> None:
             calls.append(length)
             if len(calls) > 6:
                 raise OSError(errno.ENOSPC, 'No space left on device')
@@ -1156,10 +1222,10 @@ class Failure(Base):
         self.assertUntouched(before)
 
     def test_disk_full_while_writing_the_plain_comparison(self):
-        z, before = self.prepared()
+        _, before = self.prepared()
         real = core.write_zip
 
-        def full(*a):
+        def full(*a: object) -> None:
             raise OSError(errno.ENOSPC, 'No space left on device')
         with mock.patch.object(core, 'write_zip', full), self.assertRaisesRegex(Fail, 'No space left'):
             self.run_apply()
@@ -1170,7 +1236,7 @@ class Failure(Base):
         z, before = self.prepared()
         real = os.replace
 
-        def refuse(a, b):
+        def refuse(a: str, b: str) -> None:
             if b == z:
                 raise PermissionError(13, 'file is in use')
             return real(a, b)
@@ -1179,7 +1245,7 @@ class Failure(Base):
         self.assertUntouched(before)
 
     def test_failed_verify_keeps_everything(self):
-        z, before = self.prepared()
+        _, before = self.prepared()
         with mock.patch.object(core, 'verify', return_value='sha256 differs for x'), self.assertRaisesRegex(Fail, 'sources kept'):
             self.run_apply()
         self.assertUntouched(before)
@@ -1190,9 +1256,10 @@ class Failure(Base):
         real = container.split_zip
         victim = os.path.join(self.root, 'v0.1.0', 'assets', 'app.zip')
 
-        def tamper(path, size):
+        def tamper(path: str, size: int) -> list[tuple[int, int, bool]] | None:
             cuts = real(path, size)
             if path == victim:
+                assert cuts is not None
                 with open(path, 'r+b') as f:
                     f.seek(cuts[0][0] + 10)
                     f.write(b'tampered')
@@ -1205,7 +1272,9 @@ class Failure(Base):
     def test_collision_is_refused(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
             release(self.root, v, app(v))
-        with mock.patch.object(container, 'blob_key', lambda _: 'a' * 64), self.assertRaisesRegex(Fail, 'collision'):
+        def same_key(_: str) -> str:
+            return 'a' * 64
+        with mock.patch.object(container, 'blob_key', same_key), self.assertRaisesRegex(Fail, 'collision'):
             self.run_apply()
         self.assertTrue(os.path.isdir(os.path.join(self.root, 'v0.1.0')))
 
@@ -1247,7 +1316,7 @@ core.apply(%r, trash=core.move_trash(%r), say=lambda *_: None)
     def test_restore_noticing_a_change_during_the_copy_writes_nothing(self):
         z = self.rollup()
         with mock.patch.object(Rollup, 'check', return_value=''):
-            info = Corruption.blob_of(self, z)
+            info = Corruption.blob_of(z)
             rewrite(z, change={info.filename: noise(info.file_size, 77)})
             with self.assertRaisesRegex(Fail, 'corrupt'):
                 restore(z, out=self.out, say=QUIET)
@@ -1257,7 +1326,7 @@ core.apply(%r, trash=core.move_trash(%r), say=lambda *_: None)
 class Removal(Base):
     """Without the tool a deduped rollup is still a zip that says how to get the files back."""
 
-    def script(self, z):
+    def script(self, z: str) -> tuple[str, str]:
         with zipfile.ZipFile(z) as zf:
             text = zf.read(README).decode('ascii')
         return text, text[text.index('# --- restore script ---'):text.index('# --- end ---')]
@@ -1285,7 +1354,7 @@ class Removal(Base):
     def test_readme_script_refuses_bad_names_and_bad_hashes(self):
         z = self.rollup()
 
-        def edit(m):
+        def edit(m: RawManifest) -> None:
             m['files'][0]['sha256'] = 'd' * 64
         rewrite(z, manifest=edit)
         _, script = self.script(z)
@@ -1315,7 +1384,7 @@ class Removal(Base):
         self.assertTrue(os.path.isfile(os.path.join(work, '.rollup', 'MANIFEST.json')))
 
     def test_only_stdlib_and_python_3_14_syntax(self):
-        stdlib = getattr(sys, 'stdlib_module_names', None)
+        stdlib: frozenset[str] | None = getattr(sys, 'stdlib_module_names', None)
         src = os.path.join(SRC, 'release_rollup')
         for name in os.listdir(src):
             if not name.endswith('.py'):
@@ -1323,10 +1392,10 @@ class Removal(Base):
             with open(os.path.join(src, name), encoding='utf-8') as f:
                 tree = ast.parse(f.read(), feature_version=(3, 14))
             for node in ast.walk(tree):
-                mods = []
+                mods: list[str] = []
                 if isinstance(node, ast.Import):
                     mods = [a.name for a in node.names]
-                elif isinstance(node, ast.ImportFrom) and not node.level:
+                elif isinstance(node, ast.ImportFrom) and not node.level and node.module is not None:
                     mods = [node.module]
                 for m in mods:
                     if stdlib:
@@ -1367,7 +1436,8 @@ class Paths(Base):
             f.write(noise(4000))
         z = os.path.join(self.tmp, 'long.zip')
         spool = os.path.join(self.tmp, 'spool')
-        container.write_container(z, {deep: ('file', src)}, core.local_copy(spool), spool)
+        files: Files = {deep: ('file', src)}
+        container.write_container(z, files, core.local_copy(spool), spool)
         restore(z, out=self.out, say=QUIET)
         got = long_path(os.path.join(os.path.realpath(self.out), *deep.split('/')))
         with open(got, 'rb') as f:
@@ -1393,6 +1463,7 @@ class Version(unittest.TestCase):
             self.assertIn("__version__ = '%s'" % ver, f.read())
         m = re.fullmatch(r'(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.(\d+))?', ver)
         self.assertTrue(m, ver)
+        assert m is not None
         pep440 = m.group(1) + ({'alpha': 'a', 'beta': 'b', 'rc': 'rc'}[m.group(2)] + m.group(3) if m.group(2) else '')
         with open(os.path.join(top, 'pyproject.toml')) as f:
             self.assertIn('version = "%s"' % pep440, f.read())
