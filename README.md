@@ -82,6 +82,8 @@ bash tools/check.sh
 
 runs the unit tests and byte-compiles the package. On Windows use `PY="py -3.14" bash tools/check.sh` from Git Bash.
 
+`tools/check_release.py` checks that the version numbers agree (`versions`) and that a change under `src/` adds a line under `[Unreleased]` in the changelog (`changelog --base REF --head REF`). The release-check workflow runs both on pull requests and on version tags. A pull request that users won't notice can carry the `no changelog` label.
+
 `tools/e2e.sh` runs the end-to-end checks a release goes through, on a built release zip:
 
 ```sh
