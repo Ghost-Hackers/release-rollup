@@ -95,7 +95,8 @@ def unreleased_entries(changelog: str) -> list[str]:
 def check_changelog(root: str, base: str, head: str) -> list[str]:
     merge_base = _git(root, 'merge-base', base, head)
     start = merge_base.stdout.strip() if merge_base.returncode == 0 else base
-    diff = _git(root, 'diff', '--name-only', start, head)
+    # --no-renames lists both paths of a moved file, so a file moved out of src/ still counts.
+    diff = _git(root, 'diff', '--name-only', '--no-renames', start, head)
     if diff.returncode != 0:
         return [f'git diff {start} {head} failed: {diff.stderr.strip()}']
     changed = [p for p in diff.stdout.splitlines() if p.startswith('src/')]

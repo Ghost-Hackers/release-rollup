@@ -212,6 +212,22 @@ class Changelog(unittest.TestCase):
         problems = check_release.check_changelog(self.root, self.base, 'HEAD')
         self.assertEqual(len(problems), 1)
 
+    def test_a_file_moved_out_of_src_counts_as_a_change(self) -> None:
+        # Git's rename detection would list only the new path, outside src/.
+        os.makedirs(os.path.join(self.root, 'tools'))
+        self.git('mv', 'src/release_rollup/__init__.py', 'tools/moved.py')
+        self.git('commit', '-q', '-m', 'move out')
+        problems = check_release.check_changelog(self.root, self.base, 'HEAD')
+        self.assertEqual(len(problems), 1)
+        self.assertIn('src/release_rollup/__init__.py', problems[0])
+
+    def test_a_file_moved_into_src_counts_as_a_change(self) -> None:
+        self.git('mv', 'docs/a.md', 'src/release_rollup/a.md')
+        self.git('commit', '-q', '-m', 'move in')
+        problems = check_release.check_changelog(self.root, self.base, 'HEAD')
+        self.assertEqual(len(problems), 1)
+        self.assertIn('src/release_rollup/a.md', problems[0])
+
     def test_a_bad_ref_is_an_error(self) -> None:
         self.assertTrue(check_release.check_changelog(self.root, 'no-such-ref', 'HEAD'))
 
