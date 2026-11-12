@@ -7,9 +7,10 @@ never end up in a release. Everything under .github/ is left out. The zip is
 release-rollup-<version>.zip with every file under release-rollup-<version>/, where the
 version comes from VERSION at REF. Next to it goes SHA256SUMS, which `sha256sum -c` reads.
 
-Two builds of the same commit give the same bytes: files go in sorted by path, every entry
-gets the commit's date (zip dates count in steps of 2 seconds), and the permissions come from git. So anyone can rebuild a release
-from its tag and compare the sha256 with the published one.
+Two builds of the same commit give the same bytes: files go in sorted by path and stored
+without compression, every entry gets the commit's date (zip dates count in steps of 2
+seconds), and the permissions come from git. So anyone can rebuild a release from its tag,
+on any system, and compare the sha256 with the published one.
 """
 import argparse
 import hashlib
@@ -70,30 +71,37 @@ def build(root: str, ref: str, out: str) -> str:
     zip_path = os.path.join(out, f'{name}.zip')
     sums_path = os.path.join(out, 'SHA256SUMS')
     for path in (zip_path, sums_path):
-        if os.path.exists(path):
+        # lexists, so a dangling symlink counts as taken: writing through it would land somewhere else.
+        if os.path.lexists(path):
             raise BuildError(f'{path} already exists; move it aside first')
 
-    # Everything that can refuse the build runs before the zip is opened.
+    # Everything that can refuse the build runs before anything is written.
     files = tree(root, ref)
     date = commit_date(root, ref)
     os.makedirs(out, exist_ok=True)
+    made: list[str] = []
     try:
-        with zipfile.ZipFile(zip_path, 'x') as z:
-            for path, mode, blob in files:
-                info = zipfile.ZipInfo(f'{name}/{path}', date_time=date)
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.create_system = 3  # Unix, so the permissions below are read on unpack
-                info.external_attr = int(mode, 8) << 16
-                z.writestr(info, _git(root, 'cat-file', 'blob', blob), compresslevel=9)
+        with open(zip_path, 'xb') as raw:
+            made.append(zip_path)
+            with zipfile.ZipFile(raw, 'w') as z:
+                for path, mode, blob in files:
+                    info = zipfile.ZipInfo(f'{name}/{path}', date_time=date)
+                    # Stored, not compressed: deflate output differs between zlib builds (python.org's
+                    # Windows Python uses zlib-ng), and the sha256 has to match on every system.
+                    info.compress_type = zipfile.ZIP_STORED
+                    info.create_system = 3  # Unix, so the permissions below are read on unpack
+                    info.external_attr = int(mode, 8) << 16
+                    z.writestr(info, _git(root, 'cat-file', 'blob', blob))
+        with open(zip_path, 'rb') as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        with open(sums_path, 'x', encoding='utf-8', newline='\n') as f:
+            made.append(sums_path)
+            f.write(f'{digest}  {name}.zip\n')
     except BaseException:
-        # A half-written zip must never look like a finished release.
-        os.remove(zip_path)
+        # A failed build leaves nothing that looks like a release. Only files this run created go.
+        for path in made:
+            os.remove(path)
         raise
-
-    with open(zip_path, 'rb') as f:
-        digest = hashlib.sha256(f.read()).hexdigest()
-    with open(sums_path, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(f'{digest}  {name}.zip\n')
     return zip_path
 
 

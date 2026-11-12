@@ -81,6 +81,10 @@ class Build(unittest.TestCase):
         self.assertEqual(z.read('release-rollup-1.2.3-rc.1/src/pkg/a.py'), b'a = 1\n')
         self.assertIsNone(z.testzip())
 
+    def test_entries_are_stored_without_compression(self) -> None:
+        # Deflate output differs between zlib builds, so compressed bytes would break rebuilding on another system.
+        self.assertEqual({i.compress_type for i in self.build().infolist()}, {zipfile.ZIP_STORED})
+
     def test_github_folder_is_left_out(self) -> None:
         self.assertFalse([n for n in self.build().namelist() if '/.github/' in n])
 
@@ -150,6 +154,14 @@ class Build(unittest.TestCase):
                     self.assertEqual(f.read(), 'keep\n')
                 os.remove(path)
 
+    def test_linux_a_dangling_symlink_in_place_of_an_output_is_refused(self) -> None:
+        os.makedirs(self.out)
+        target = os.path.join(self.out, 'elsewhere.txt')
+        os.symlink(target, os.path.join(self.out, 'SHA256SUMS'))
+        self.assertIn('already exists', self.refused())
+        self.assertFalse(os.path.exists(target))
+        self.assertEqual(sorted(os.listdir(self.out)), ['SHA256SUMS'])
+
     def test_a_symlink_is_refused(self) -> None:
         # A link's blob holds its target; any blob will do for git to store it as a link.
         self.git('update-index', '--add', '--cacheinfo', f"120000,{self.git('rev-parse', 'HEAD:README.md')},link")
@@ -165,7 +177,7 @@ class Build(unittest.TestCase):
         os.chmod(obj, stat.S_IWRITE)  # git stores objects read-only, and Windows won't delete those
         os.remove(obj)
         self.assertIn('failed', self.refused())
-        self.assertFalse(os.path.exists(os.path.join(self.out, 'release-rollup-1.2.3-rc.1.zip')))
+        self.assertEqual(os.listdir(self.out), [])
 
     def test_a_submodule_is_refused(self) -> None:
         head = self.git('rev-parse', 'HEAD')
