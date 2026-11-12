@@ -10,6 +10,13 @@ cd "$(dirname "$0")/.."
 export PYTHONPATH=src
 PY=${PY:-python3}
 
+# Root reads past file permissions, so the tests that lock a file or folder couldn't see the
+# refusal they check for. Run as a normal user (in a container: add one and use it).
+if [ "$(uname -s)" = Linux ] && [ "$(id -u)" -eq 0 ]; then
+  echo "check.sh: running as root, so the file permission tests can't work. Run it as a normal user." >&2
+  exit 1
+fi
+
 if [ -z "${RR_SMALLFS:-}" ] && [ "$(uname -s)" = Linux ]; then
   if ! unshare -rm true 2>/dev/null; then
     echo "check.sh: unshare -rm failed, so no small filesystem for the disk-full tests." >&2
