@@ -42,6 +42,38 @@ jobs:
       - name: Show the Python version
         run: python --version
 
+      # Some tests fill a real disk (tests/smallfs.py). They need RR_SMALLFS, a folder on a
+      # filesystem of a few MB, and fail without it. Both steps below export it for the later steps.
+      - name: Make a small filesystem for the disk-full tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/small"
+          sudo mount -t tmpfs -o size=4m,mode=1777 tmpfs "$RUNNER_TEMP/small"
+          df -h "$RUNNER_TEMP/small"
+          echo "RR_SMALLFS=$RUNNER_TEMP/small" >> "$GITHUB_ENV"
+
+      - name: Make a small filesystem for the disk-full tests (Windows)
+        # An 8 MB fixed VHD, formatted NTFS and given drive S:. The runner is an administrator,
+        # which diskpart needs.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'small.vhd'
+          $script = Join-Path $env:RUNNER_TEMP 'small.diskpart'
+          @(
+            "create vdisk file=`"$vhd`" maximum=8 type=fixed"
+            "select vdisk file=`"$vhd`""
+            'attach vdisk'
+            'create partition primary'
+            'format fs=ntfs quick label=small'
+            'assign letter=S'
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          if ($LASTEXITCODE -ne 0) { throw "diskpart failed with exit code $LASTEXITCODE" }
+          New-Item -ItemType Directory -Path 'S:\tests' | Out-Null
+          Get-PSDrive S
+          "RR_SMALLFS=S:\tests" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Run the unit tests
         # The summary must be a bare OK. "OK (skipped=N)" fails the job: every test
         # has to run on both systems. Output from the tests can follow the summary,

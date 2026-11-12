@@ -1,5 +1,6 @@
 """The upgrade command: plain rollup zips become deduped ones, or stay exactly as they are."""
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -8,11 +9,11 @@ import unittest
 import zipfile
 import zlib
 from collections.abc import Buffer
-from unittest import mock
 
 import hostcat
+import smallfs
 import test_dedupe as TD
-from release_rollup import cli, container, core
+from release_rollup import cli, core
 from release_rollup.container import Rollup, restore
 from release_rollup.core import Fail, upgrade
 
@@ -194,13 +195,17 @@ class Upgrade(TD.Base):
         self.assertTrue(any(s.startswith('skipped notes.zip') for s in self.said), self.said)
 
     def test_a_failure_while_writing_leaves_the_old_zip(self):
+        # The disk runs full while the deduped copy is written.
+        self.use_small_fs()
         z = self.plain()
         before = TD.snapshot(self.tmp)
-        with mock.patch.object(container, '_copy_range', side_effect=OSError(28, 'No space left')):
-            with self.assertRaises(Fail):
-                self.up()
+        ballast = smallfs.leave_free(self, self.root, 16 << 10)
+        with self.assertRaises(Fail):
+            self.up()
+        self.assertTrue(any(re.search(smallfs.FULL, s) for s in self.said), self.said)
         self.assertEqual(TD.snapshot(self.tmp), before)
         self.assertEqual(self.hidden(), [])
+        os.remove(ballast)
         self.assertEqual(self.up(), 1)
         self.assertTrue(TD.is_deduped(z))
 
