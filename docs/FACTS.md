@@ -100,3 +100,4 @@ General:
 - `restore` work folders are named `.rollup-restore.<random>.tmp`, in the `--out` folder.
 - `upgrade` leaves `.<zip>.upgrade-old` next to a zip when a run dies between the rename and the trash. The next `upgrade` trashes it once the zip in place proves all its files.
 - A reader that doesn't want this package as a dependency can read `.rollup/MANIFEST.json` with the standard library. The file list is `files[].path`. The bytes are a blob, or a skeleton plus blobs, proved by the `sha256` of the entry.
+- `tools/check_release.py changelog` compares the `## [Unreleased]` entry lines against the merge base. A line that replaces an old one counts as a rewording, so a change needs more entries than it removes.
