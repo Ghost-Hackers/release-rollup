@@ -13,7 +13,7 @@ import zipfile
 from collections.abc import Callable, Iterable
 from typing import IO, Literal, TypedDict
 
-from .container import (DEFAULT_MAX_SIZE, READ_ERRORS, TOP_RE, Fail, Member, Rollup, check_paths, n, path_problem,
+from .container import (DEFAULT_MAX_SIZE, READ_ERRORS, TOP_RE, Fail, Member, Rollup, check_paths, n, path_problem, reason,
                         sha_stream, windows_name_problem, write_container)
 
 type Version = tuple[int, int, int]
@@ -378,7 +378,7 @@ def verify(path: str, files: Files) -> str:
             if extra:
                 return 'unexpected entry %s' % sorted(extra)[0]
     except (Fail, OSError) + READ_ERRORS as e:
-        return str(e)
+        return reason(e)
     return ''
 
 
@@ -398,7 +398,7 @@ def build_target(target: str, files: Files, dedupe: bool, label: str, what: str,
     except OSError as e:
         raise Fail('%s could not be written (%s); sources kept' % (label, e))
     except READ_ERRORS as e:
-        raise Fail('%s could not be written, a source is unreadable (%s); sources kept' % (label, e))
+        raise Fail('%s could not be written, a source is unreadable (%s); sources kept' % (label, reason(e)))
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -713,7 +713,7 @@ def clear_leftover(path: str, trash: Trash, say: Say) -> None:
             ok = not z.deduped and not z.check()
         why = verify(path, files) if ok and files else 'the old copy is not a plain rollup'
     except (Fail, OSError) + READ_ERRORS as e:
-        why = str(e)
+        why = reason(e)
     if why:
         say('left %s alone: %s' % (os.path.basename(old), why))
         return
@@ -738,7 +738,7 @@ def upgrade_zip(path: str, label: str, dry: bool, trash: Trash | None, say: Say)
                 return 'skipped', 0, 0, 'not a rollup (files outside v<version>/ folders)'
             why = z.check()
         except READ_ERRORS as e:
-            return 'refused', 0, 0, str(e)
+            return 'refused', 0, 0, reason(e)
         if why:
             return 'refused', 0, 0, why
     try:
@@ -771,7 +771,7 @@ def upgrade_zip(path: str, label: str, dry: bool, trash: Trash | None, say: Say)
     except OSError as e:
         return 'refused', 0, 0, 'could not be written (%s)' % e
     except READ_ERRORS as e:
-        return 'refused', 0, 0, 'could not be written, a file is unreadable (%s)' % e
+        return 'refused', 0, 0, 'could not be written, a file is unreadable (%s)' % reason(e)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)

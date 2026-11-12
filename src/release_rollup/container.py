@@ -53,6 +53,11 @@ WIN_BAD_CHARS = re.compile(r'[<>:"|?*]')
 READ_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError, struct.error,
                ValueError, LookupError, OverflowError)
 
+
+def reason(e: BaseException) -> str:
+    """The text of an error, or its type name when the text is empty. A cut-short zip member raises a bare EOFError."""
+    return str(e) or type(e).__name__
+
 class Fail(Exception):
     pass
 
@@ -286,7 +291,7 @@ class Member:
                         break
                     yield chunk
         except READ_ERRORS as e:
-            raise Fail('blob %s of %s cannot be read (%s)' % (name, path, e))
+            raise Fail('blob %s of %s cannot be read (%s)' % (name, path, reason(e)))
         if left or blob_key(h.hexdigest()) != name:
             raise Fail('blob %s of %s is corrupt' % (name, path))
 
@@ -317,7 +322,7 @@ class Member:
                 for chunk in self._skeleton_part(sk, h.update, e['skeleton_size'] - pos, e['skeleton']):
                     yield chunk
         except READ_ERRORS as err:
-            raise Fail('skeleton %s of %s cannot be read (%s)' % (e['skeleton'], e['path'], err))
+            raise Fail('skeleton %s of %s cannot be read (%s)' % (e['skeleton'], e['path'], reason(err)))
         if h.hexdigest() != e['skeleton']:
             raise Fail('skeleton %s of %s is corrupt' % (e['skeleton'], e['path']))
 
@@ -367,7 +372,7 @@ class Rollup:
         try:
             self.zip = zipfile.ZipFile(path)
         except READ_ERRORS as e:
-            raise Fail(str(e))
+            raise Fail(reason(e))
         try:
             names = self.zip.namelist()
             self.deduped = MANIFEST in names
@@ -375,7 +380,7 @@ class Rollup:
                 self._load(names, max_size)
         except READ_ERRORS as e:
             self.zip.close()
-            raise Fail(str(e))
+            raise Fail(reason(e))
         except Fail:
             self.zip.close()
             raise
@@ -459,7 +464,7 @@ class Rollup:
         except Fail as e:
             return str(e)
         except READ_ERRORS as e:
-            return str(e)
+            return reason(e)
         return ''
 
     def close(self) -> None:

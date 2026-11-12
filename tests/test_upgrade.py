@@ -1,10 +1,13 @@
 """The upgrade command: plain rollup zips become deduped ones, or stay exactly as they are."""
 import os
+import shutil
 import signal
+import struct
 import subprocess
 import sys
 import unittest
 import zipfile
+import zlib
 from unittest import mock
 
 import hostcat
@@ -24,6 +27,41 @@ def read(path):
 def write(path, data):
     with open(path, 'wb') as f:
         f.write(data)
+
+
+def cut_short(path, name):
+    """Add an entry called name that reads past the end of the zip, so reading it raises a bare EOFError.
+
+    It reuses the local header of the last member in the central directory and claims more stored bytes than the
+    file holds. Sharing a header offset is the one layout Python's zip reader lets through with only an
+    "Overlapped entries" warning; any other entry that runs past the next header is refused with BadZipFile.
+    The new entry keeps the raw name of the header it borrows and gets its own name from a Unicode path extra
+    field (0x7075), so the zip still opens. It goes just before the borrowed entry: that one ends at the central
+    directory, the new one ends at the shared header and only warns. A name that is already in the zip now reads
+    the cut-short entry, as it is listed after the original.
+    """
+    data = read(path)
+    eocd = data.rindex(b'PK\x05\x06')
+    count, cd_size, cd_off = struct.unpack('<HII', data[eocd + 10:eocd + 20])
+    entries, pos = [], cd_off
+    for _ in range(count):
+        nlen, elen, clen = struct.unpack('<HHH', data[pos + 28:pos + 34])
+        entries.append(data[pos:pos + 46 + nlen + elen + clen])
+        pos += 46 + nlen + elen + clen
+    last = entries[-1]
+    nlen = struct.unpack('<H', last[28:30])[0]
+    raw = last[46:46 + nlen]
+    new = name.encode('utf-8')
+    extra = struct.pack('<HHBI', 0x7075, 5 + len(new), 1, zlib.crc32(raw)) + new
+    entry = bytearray(last[:46 + nlen])
+    struct.pack_into('<HHH', entry, 8, struct.unpack('<H', last[8:10])[0] & ~0x8, zipfile.ZIP_STORED, 0)
+    struct.pack_into('<II', entry, 20, len(data), len(data))
+    struct.pack_into('<HHH', entry, 30, len(extra), 0, 0)
+    entry += extra
+    cd = b''.join(entries[:-1]) + bytes(entry) + last
+    end = bytearray(data[eocd:])
+    struct.pack_into('<HHII', end, 8, count + 1, count + 1, len(cd), cd_off)
+    write(path, data[:cd_off] + cd + bytes(end))
 
 
 class Upgrade(TD.Base):
@@ -212,6 +250,37 @@ core.upgrade(%r, trash=core.move_trash(%r), say=lambda *_: None)
         self.up()
         self.assertTrue(os.path.exists(left))
         self.assertTrue(any('left .0.1.zip.upgrade-old alone' in s for s in self.said), self.said)
+
+    def test_a_member_cut_short_is_refused_with_a_reason_and_untouched(self):
+        # A bare EOFError has no text: the refusal must still say why, before anything is written.
+        z = self.plain()
+        cut_short(z, 'v0.1.0/assets/short.bin')
+        with zipfile.ZipFile(z) as p, self.assertWarnsRegex(UserWarning, 'Overlapped entries'):
+            with self.assertRaises(EOFError) as raised:
+                p.read('v0.1.0/assets/short.bin')
+        self.assertEqual(str(raised.exception), '')
+        before = TD.snapshot(self.tmp)
+        with self.assertWarnsRegex(UserWarning, 'Overlapped entries'), self.assertRaisesRegex(Fail, '0.1.zip'):
+            self.up()
+        self.assertEqual(TD.snapshot(self.tmp), before)
+        self.assertEqual(self.trashed(), [])
+        self.assertTrue(any(s.startswith('refused 0.1.zip: EOFError') for s in self.said), self.said)
+
+    def test_a_leftover_with_a_member_cut_short_is_not_trashed(self):
+        # The old copy reads fine up to one member that ends early: it does not prove the new zip, so it stays.
+        z = self.plain()
+        left = os.path.join(self.root, '.0.1.zip.upgrade-old')
+        with zipfile.ZipFile(z) as p:
+            first = p.infolist()[0].filename
+        self.up()
+        shutil.copy2(os.path.join(self.tmp, 'old-zips', '.0.1.zip.upgrade-old'), left)
+        cut_short(left, first)
+        keep = TD.sha_file(left)
+        with self.assertWarnsRegex(UserWarning, 'Overlapped entries'):
+            self.up()
+        self.assertTrue(os.path.exists(left), 'the damaged old copy was trashed')
+        self.assertEqual(TD.sha_file(left), keep)
+        self.assertTrue(any(s.startswith('left .0.1.zip.upgrade-old alone') for s in self.said), self.said)
 
     def test_cli(self):
         self.plain()
