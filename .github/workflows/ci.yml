@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Pull requests are checked on every push to their branch, before they can be merged.
+  # Pushes to master run again after a merge.
   push:
+    branches: [master]
   pull_request:
 
 permissions:
