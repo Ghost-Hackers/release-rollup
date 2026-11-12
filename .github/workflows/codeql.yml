@@ -12,9 +12,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: codeql-${{ github.ref }}
-  # A newer push replaces a pull request's scan. On master every commit keeps its own results.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A pull request's runs share one group, so a newer push cancels the older run.
+  # Every other run gets a group of its own: GitHub keeps only one pending run per
+  # group and drops the rest, which would lose results for quick pushes to master.
+  group: codeql-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   analyze:
