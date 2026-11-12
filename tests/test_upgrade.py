@@ -283,6 +283,35 @@ core.upgrade(%r, trash=core.move_trash(%r), say=lambda *_: None)
         self.assertEqual(TD.sha_file(left), keep)
         self.assertTrue(any(s.startswith('left .0.1.zip.upgrade-old alone') for s in self.said), self.said)
 
+    def test_a_leftover_that_fails_its_check_says_so_with_the_reason(self):
+        z = self.plain()
+        left = os.path.join(self.root, '.0.1.zip.upgrade-old')
+        with zipfile.ZipFile(z) as p:
+            first = p.infolist()[0].filename
+        self.up()
+        shutil.copy2(os.path.join(self.tmp, 'old-zips', '.0.1.zip.upgrade-old'), left)
+        cut_short(left, first)
+        keep = read(left)
+        with self.assertWarnsRegex(UserWarning, 'Overlapped entries'):
+            self.up()
+        lines = [s for s in self.said if s.startswith('left .0.1.zip.upgrade-old alone')]
+        self.assertEqual(len(lines), 1, self.said)
+        self.assertIn('the old copy failed its check: ', lines[0])
+        self.assertTrue(lines[0].split('failed its check: ', 1)[1].strip(), lines[0])
+        self.assertNotIn('is not a plain rollup', lines[0])
+        self.assertEqual(read(left), keep)
+
+    def test_a_leftover_that_is_not_a_plain_rollup_keeps_its_wording(self):
+        self.plain()
+        self.up()
+        left = os.path.join(self.root, '.0.1.zip.upgrade-old')
+        shutil.copy2(os.path.join(self.root, '0.1.zip'), left)
+        self.assertTrue(TD.is_deduped(left))
+        keep = read(left)
+        self.up()
+        self.assertTrue(any(s == 'left .0.1.zip.upgrade-old alone: the old copy is not a plain rollup' for s in self.said), self.said)
+        self.assertEqual(read(left), keep)
+
     def test_cli(self):
         self.plain()
         trash = os.path.join(self.tmp, 'cli-trash')

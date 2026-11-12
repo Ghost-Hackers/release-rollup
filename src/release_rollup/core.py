@@ -710,8 +710,14 @@ def clear_leftover(path: str, trash: Trash, say: Say) -> None:
     try:
         with Rollup(old) as z:
             files: Files = {nm: ('zip', (old, nm)) for nm in z.files()}
-            ok = not z.deduped and not z.check()
-        why = verify(path, files) if ok and files else 'the old copy is not a plain rollup'
+            plain = not z.deduped and bool(files)
+            failed = z.check() if plain else ''
+        if not plain:
+            why = 'the old copy is not a plain rollup'
+        elif failed:
+            why = 'the old copy failed its check: %s' % failed
+        else:
+            why = verify(path, files)
     except (Fail, OSError) + READ_ERRORS as e:
         why = reason(e)
     if why:
