@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  # Pull requests are checked on every push to their branch, before they can be merged.
+  # Pushes to master run again after a merge.
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Show the Python version
+        run: python --version
+
+      - name: Run the unit tests
+        # The summary must be a bare OK. "OK (skipped=N)" fails the job: every test
+        # has to run on both systems. Output from the tests can follow the summary,
+        # so this looks for the summary line anywhere instead of only the last line.
+        run: |
+          mkdir -p logs
+          PYTHONPATH=src python -m unittest discover -s tests -v > logs/unit.log 2>&1 || { tail -n 40 logs/unit.log; exit 1; }
+          grep -E '^Ran [0-9]+ tests' logs/unit.log
+          tr -d '\r' < logs/unit.log > logs/unit.clean
+          if grep -qE '^OK \(' logs/unit.clean || grep -qE ' \.\.\. skipped ' logs/unit.clean || ! grep -qx 'OK' logs/unit.clean; then
+            echo "unit tests: the summary is not a bare OK (skipped or missing)"
+            grep -E '^OK|\.\.\. skipped ' logs/unit.clean | head -n 20
+            exit 1
+          fi
+
+      - name: Run check.sh
+        run: PY=python bash tools/check.sh 2>&1 | tee logs/check.log
+
+      - name: Build the release zip from this commit
+        run: |
+          V=$(cat VERSION)
+          mkdir -p dist
+          git archive --prefix=release-rollup-$V/ -o dist/release-rollup-$V.zip HEAD
+
+      - name: Download the published 0.1.0 zip
+        # Used by the cross-version check below.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v0.1.0 --pattern 'release-rollup-0.1.0.zip' -D old
+
+      - name: Run the end-to-end checks
+        run: |
+          V=$(cat VERSION)
+          PY=python bash tools/e2e.sh dist/release-rollup-$V.zip 2>&1 | tee logs/e2e.log
+
+      - name: Run the end-to-end checks against 0.1.0
+        run: |
+          V=$(cat VERSION)
+          PY=python bash tools/e2e.sh dist/release-rollup-$V.zip --cross old/release-rollup-0.1.0.zip 2>&1 | tee logs/e2e-cross.log
+
+      - name: Run the end-to-end self-check
+        # Proves the e2e script fails on a zip with one changed byte.
+        run: |
+          V=$(cat VERSION)
+          PY=python bash tools/e2e.sh --self-check dist/release-rollup-$V.zip 2>&1 | tee logs/e2e-self.log
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-${{ matrix.os }}
+          path: logs/
+          if-no-files-found: ignore
+
+  types:
+    name: Pyright strict
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+
+      - name: Run Pyright
+        # Settings come from [tool.pyright] in pyproject.toml. Any error fails the job.
+        run: npx --yes pyright@1.1.414

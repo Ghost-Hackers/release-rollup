@@ -1,5 +1,7 @@
 # release-rollup
 
+[![CI](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/ci.yml/badge.svg)](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/ci.yml)
+
 A small command line tool that keeps a releases folder tidy. You publish releases as `v<version>/` folders, and release-rollup zips the old ones by version line so only the newest release stays unpacked. It is for any project that publishes releases as folders and doesn't want the old ones piling up. Content that repeats across the builds in a zip is stored once, and each zip is tested and compared by sha256 with its source before anything goes to the trash.
 
 Before, with 0.2.0 just published:
