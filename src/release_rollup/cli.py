@@ -1,13 +1,31 @@
 import argparse
 import os
 import sys
+from collections.abc import Sequence
 
 from . import __version__
 from .container import DEFAULT_MAX_SIZE, restore
 from .core import DEFAULT_MARKERS, PRE_MARKERS, Fail, apply, apply_pre, make_trash, upgrade, archive
 
 
-def describe(e):
+class Args(argparse.Namespace):
+    """The parsed command line. Each subcommand sets only its own options."""
+    cmd: str | None
+    root: str
+    dry_run: bool
+    marker: list[str] | None
+    trash_dir: str | None
+    keep_rc: bool
+    zip_newest: bool
+    no_dedupe: bool
+    current: str | None
+    out: str | None
+    rollup: str
+    check: bool
+    max_size: int
+
+
+def describe(e: OSError | ValueError) -> str:
     """One line for an error the code did not expect, such as a name the file system refuses (NUL, a trailing dot or space)."""
     if isinstance(e, OSError):
         what = e.strerror or str(e)
@@ -16,7 +34,7 @@ def describe(e):
     return 'a file name was refused (%s); check for a name this system cannot open (on Windows: CON, NUL, a trailing dot or space)' % e
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog='release-rollup', description='Roll published releases up into zips.')
     ap.add_argument('--version', action='version', version='release-rollup ' + __version__)
     sub = ap.add_subparsers(dest='cmd')
@@ -68,9 +86,9 @@ def build_parser():
     return ap
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     ap = build_parser()
-    a = ap.parse_args(argv)
+    a = ap.parse_args(argv, namespace=Args())
     if a.cmd == 'restore':
         try:
             restore(a.rollup, out=a.out, check_only=a.check, max_size=a.max_size)
@@ -91,6 +109,7 @@ def main(argv=None):
     try:
         trash = None if a.dry_run else make_trash(a.trash_dir)
         if a.cmd == 'archive':
+            assert a.out is not None  # --out is required for archive
             archive(root, a.out, dry=a.dry_run, trash=trash)
         elif a.cmd == 'upgrade':
             upgrade(root, dry=a.dry_run, trash=trash)

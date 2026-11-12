@@ -24,3 +24,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 release_rollup = ["VERSION"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"

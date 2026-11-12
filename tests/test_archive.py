@@ -112,6 +112,7 @@ class Rolling(Base):
         want = {n: TD.sha(read(os.path.join(self.root, n))) for n in ('kit.zip', 'kit2.zip')}
         self.run_archive()
         with Rollup(self.target()) as r:
+            assert r.manifest is not None
             kinds = {e['path']: e['kind'] for e in r.manifest['files'].values()}
         self.assertEqual(kinds, {'kit.zip': 'zip-split', 'kit2.zip': 'zip-split'})
         self.assertEqual(self.restored(), want)

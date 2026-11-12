@@ -10,9 +10,39 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from collections.abc import Callable, Iterable
+from typing import IO, Literal, TypedDict
 
-from .container import (DEFAULT_MAX_SIZE, READ_ERRORS, TOP_RE, Fail, Rollup, check_paths, n, path_problem, sha_stream,
-                        windows_name_problem, write_container)
+from .container import (DEFAULT_MAX_SIZE, READ_ERRORS, TOP_RE, Fail, Member, Rollup, check_paths, n, path_problem,
+                        sha_stream, windows_name_problem, write_container)
+
+type Version = tuple[int, int, int]
+# (major, minor, patch, stage rank, build number); see vkey().
+type VKey = tuple[int, int, int, int, int]
+# Where a file comes from: a file on disk, or (zip path, name) inside a rollup.
+type Src = tuple[Literal['file'], str] | tuple[Literal['zip'], tuple[str, str]]
+type Files = dict[str, Src]
+type Trash = Callable[[str], None]
+type Say = Callable[[str], object]
+type GroupKey = (tuple[Literal['one'], Version] | tuple[Literal['pre']] | tuple[Literal['line'], int, int]
+                 | tuple[Literal['major'], int])
+type UpgradeStatus = Literal['upgraded', 'deduped', 'kept', 'skipped', 'refused']
+
+
+class Found(TypedDict):
+    """Where one version or build lives: its published folder, if any, and the zips that hold it."""
+    dir: str | None
+    zips: list[str]
+
+
+class Step[K](TypedDict):
+    """One rollup to write or re-check. K is a Version for releases and a build name for pre-releases."""
+    target: str
+    members: list[K]
+    sources: list[tuple[str, Literal['dir', 'zip']]]
+    built: bool
+    found: dict[K, Found]
+
 
 VER = r'(\d+)\.(\d+)\.(\d+)'
 DIR_RE = re.compile(r'^v' + VER + r'$')
@@ -31,23 +61,36 @@ PRE_ZIP_RE = re.compile(r'^v' + VER + r'-(' + '|'.join(STAGES) + r')\.x\.zip$')
 PRE_MARKERS = ('PRERELEASE.json', 'SHA256SUMS')
 
 
-def vkey(name):
+def version_of(m: re.Match[str]) -> Version:
+    """The version in groups 1 to 3 of a match of any of the patterns above."""
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def vkey(name: str) -> VKey | None:
     """Sort key of a version, folder or zip name: (major, minor, patch, rank, n) with alpha 0, beta 1, rc 2 and a
     final release 3 (n 0).
     None for a name that is not a version."""
     m = PRE_RE.match(name)
     if m:
-        return tuple(map(int, m.groups()[:3])) + (STAGES.index(m.group(4)), int(m.group(5)))
+        stage: str = m.group(4)
+        return version_of(m) + (STAGES.index(stage), int(m.group(5)))
     m = re.match(r'^v?' + VER + r'(?:\.zip)?$', name)
-    return tuple(map(int, m.groups())) + (3, 0) if m else None
+    return version_of(m) + (3, 0) if m else None
 
 
-def vs(t):
+def build_key(name: str) -> VKey:
+    """vkey() of a build name that already matched PRE_DIR_RE, so it is never None."""
+    k = vkey(name)
+    assert k is not None
+    return k
+
+
+def vs(t: Version) -> str:
     return '%d.%d.%d' % t
 
 
-def folder_files(path):
-    out = {}
+def folder_files(path: str) -> dict[str, str]:
+    out: dict[str, str] = {}
     for d, _, fs in os.walk(path):
         for f in fs:
             p = os.path.join(d, f)
@@ -55,7 +98,7 @@ def folder_files(path):
     return out
 
 
-def is_published(path, markers):
+def is_published(path: str, markers: Iterable[str]) -> bool:
     for m in markers:
         p = os.path.join(path, m.rstrip('/'))
         if m.endswith('/'):
@@ -66,19 +109,20 @@ def is_published(path, markers):
     return True
 
 
-def scan(root, markers=DEFAULT_MARKERS):
+def scan(root: str, markers: Iterable[str] = DEFAULT_MARKERS) -> tuple[dict[Version, Found], dict[str, list[Version]]]:
     """Return (found, zmembers).
 
     found maps a version tuple to {'dir': path or None, 'zips': [paths]};
     zmembers maps a zip path to the sorted versions it holds.
     """
-    found, zmembers = {}, {}
+    found: dict[Version, Found] = {}
+    zmembers: dict[str, list[Version]] = {}
     for name in sorted(os.listdir(root)):
         p = os.path.join(root, name)
         m = DIR_RE.match(name)
         if m and os.path.isdir(p):
             if is_published(p, markers):
-                found.setdefault(tuple(map(int, m.groups())), {'dir': None, 'zips': []})['dir'] = p
+                found.setdefault(version_of(m), {'dir': None, 'zips': []})['dir'] = p
             continue
         if ZIP_RE.match(name) and os.path.isfile(p):
             try:
@@ -86,19 +130,19 @@ def scan(root, markers=DEFAULT_MARKERS):
                     tops = {i.split('/')[0] for i in z.names()}
             except Fail as e:
                 raise Fail('%s is not a readable zip (%s); nothing was changed' % (name, e))
-            vers = []
+            vers: list[Version] = []
             for t in tops:
                 m = DIR_RE.match(t)
                 if not m:
                     raise Fail('%s holds an unexpected top-level entry %r' % (name, t))
-                vers.append(tuple(map(int, m.groups())))
+                vers.append(version_of(m))
             zmembers[p] = sorted(vers)
             for v in vers:
                 found.setdefault(v, {'dir': None, 'zips': []})['zips'].append(p)
     return found, zmembers
 
 
-def group_of(v, newest, zip_newest=False):
+def group_of(v: Version, newest: Version, zip_newest: bool = False) -> GroupKey | None:
     a, b, _ = v
     if v == newest:
         return ('one', v) if zip_newest else None
@@ -111,7 +155,7 @@ def group_of(v, newest, zip_newest=False):
     return ('line', a, b) if newest[1] > b else ('one', v)
 
 
-def target_name(key, members):
+def target_name(key: GroupKey, members: list[Version]) -> str:
     if key[0] == 'one':
         return 'v%s.zip' % vs(members[0])
     if key[0] == 'line':
@@ -121,26 +165,33 @@ def target_name(key, members):
     return 'pre-1.0.0.zip'
 
 
-def plan(root, markers=DEFAULT_MARKERS, zip_newest=False):
+def step_sources[K](found: dict[K, Found], members: list[K], target: str) -> list[tuple[str, Literal['dir', 'zip']]]:
+    """The folders and zips holding the members, each once, without the target itself."""
+    srcs: list[tuple[str, Literal['dir', 'zip']]] = []
+    for v in members:
+        d = found[v]['dir']
+        for p in ([d] if d else []) + found[v]['zips']:
+            if p != target and p not in [s for s, _ in srcs]:
+                srcs.append((p, 'dir' if os.path.isdir(p) else 'zip'))
+    return srcs
+
+
+def plan(root: str, markers: Iterable[str] = DEFAULT_MARKERS, zip_newest: bool = False) -> list[Step[Version]]:
     """List of steps: {'target', 'members', 'sources', 'built', 'found'}."""
     found, zmembers = scan(root, markers)
     if not found:
         return []
     newest = max(found)
-    groups = {}
+    groups: dict[GroupKey, list[Version]] = {}
     for v in found:
         k = group_of(v, newest, zip_newest)
         if k:
             groups.setdefault(k, []).append(v)
-    out = []
+    out: list[Step[Version]] = []
     for k, mem in sorted(groups.items(), key=lambda kv: min(kv[1])):
         mem = sorted(mem)
         target = os.path.join(root, target_name(k, mem))
-        srcs = []
-        for v in mem:
-            for p in ([found[v]['dir']] if found[v]['dir'] else []) + found[v]['zips']:
-                if p != target and p not in [s for s, _ in srcs]:
-                    srcs.append((p, 'dir' if os.path.isdir(p) else 'zip'))
+        srcs = step_sources(found, mem, target)
         done = os.path.isfile(target) and zmembers.get(target) == mem
         if done and not srcs:
             continue
@@ -148,16 +199,16 @@ def plan(root, markers=DEFAULT_MARKERS, zip_newest=False):
     return out
 
 
-def host_is_windows():
+def host_is_windows() -> bool:
     return os.name == 'nt'
 
 
-def windows_findings(names):
+def windows_findings(names: Iterable[str]) -> list[tuple[str, str]]:
     """[(name, reason)] for every name Windows cannot write or restore."""
     return [(a, why) for a, why in ((a, windows_name_problem(a)) for a in sorted(names)) if why]
 
 
-def screen_names(groups, say, verb='roll up'):
+def screen_names(groups: Iterable[tuple[str, Iterable[str]]], say: Say, verb: str = 'roll up') -> int:
     """groups: [(label, names)]. Windows cannot hold names such as CON, aux.txt, NUL, or a name ending in a dot or space.
     On Windows, any such name raises Fail before anything is written; elsewhere it is a warning, since the
     rollup would be refused by restore on a Windows machine. Returns how many names were flagged."""
@@ -180,13 +231,14 @@ def screen_names(groups, say, verb='roll up'):
     return len(bad)
 
 
-def member_files(step):
+def member_files(step: Step[Version]) -> Files:
     """arcname -> (kind, location) for every member; the folder wins, else the first zip holding it."""
-    files = {}
+    files: Files = {}
     for v in step['members']:
         e = step['found'][v]
-        if e['dir']:
-            for arc, p in folder_files(e['dir']).items():
+        d = e['dir']
+        if d:
+            for arc, p in folder_files(d).items():
                 files['v%s/%s' % (vs(v), arc)] = ('file', p)
         else:
             zp = [z for z in e['zips'] if z != step['target']] or e['zips']
@@ -197,15 +249,19 @@ def member_files(step):
     return files
 
 
-def open_src(src):
-    kind, loc = src
-    if kind == 'file':
-        return open(loc, 'rb'), None
+def open_member(loc: tuple[str, str]) -> tuple[Member | IO[bytes], Rollup]:
+    """Open a file inside a rollup. The caller closes both the file and the rollup."""
     z = Rollup(loc[0])
     return z.open(loc[1]), z
 
 
-def sha_of(src):
+def open_src(src: Src) -> tuple[Member | IO[bytes], Rollup | None]:
+    if src[0] == 'file':
+        return open(src[1], 'rb'), None
+    return open_member(src[1])
+
+
+def sha_of(src: Src) -> str:
     f, z = open_src(src)
     try:
         return sha_stream(f)
@@ -215,20 +271,19 @@ def sha_of(src):
             z.close()
 
 
-def src_size(src):
-    kind, loc = src
-    if kind == 'file':
-        return os.path.getsize(loc)
-    with Rollup(loc[0]) as z:
-        return z.size(loc[1])
+def src_size(src: Src) -> int:
+    if src[0] == 'file':
+        return os.path.getsize(src[1])
+    with Rollup(src[1][0]) as z:
+        return z.size(src[1][1])
 
 
-def worth_it(plain, deduped):
+def worth_it(plain: int, deduped: int) -> bool:
     """A deduped rollup asks more of whoever opens it, so it has to win by a margin."""
     return plain - deduped >= max(1024, plain // 100)
 
 
-def write_zip(tmp, files, beaten_by=None):
+def write_zip(tmp: str, files: Files, beaten_by: int | None = None) -> bool:
     """Write a plain zip. With beaten_by, stop and return False once it is clearly bigger than a file of that size."""
     with open(tmp, 'w+b') as raw, zipfile.ZipFile(raw, 'w', zipfile.ZIP_DEFLATED) as z:
         for arc in sorted(files):
@@ -249,14 +304,13 @@ def write_zip(tmp, files, beaten_by=None):
     return True
 
 
-def local_copy(spool):
+def local_copy(spool: str) -> Callable[[Src], tuple[str, bool]]:
     """For write_container: a real, seekable file for a source, spooled out of its zip when it lives in one."""
-    def get(src):
-        kind, loc = src
-        if kind == 'file':
-            return loc, False
+    def get(src: Src) -> tuple[str, bool]:
+        if src[0] == 'file':
+            return src[1], False
         fd, path = tempfile.mkstemp(prefix='src.', dir=spool)
-        f, z = open_src(src)
+        f, z = open_member(src[1])
         try:
             with os.fdopen(fd, 'wb') as w:
                 shutil.copyfileobj(f, w, 1 << 20)
@@ -267,7 +321,7 @@ def local_copy(spool):
     return get
 
 
-def write_rollup(tmp, files, dedupe, label, say, top='release', force=False):
+def write_rollup(tmp: str, files: Files, dedupe: bool, label: str, say: Say, top: str = 'release', force: bool = False) -> bool:
     """Write tmp as a deduped rollup, or as a plain zip when asked to or when sharing saves nothing.
     With force it is always deduped (an archive stays one format, whatever it holds).
     Returns True when it is deduped."""
@@ -306,7 +360,7 @@ def write_rollup(tmp, files, dedupe, label, say, top='release', force=False):
     return True
 
 
-def verify(path, files):
+def verify(path: str, files: Files) -> str:
     """Empty string when the rollup is sound and holds every file with the same sha256, else the reason."""
     try:
         with Rollup(path) as z:
@@ -328,7 +382,8 @@ def verify(path, files):
     return ''
 
 
-def build_target(target, files, dedupe, label, what, say, top='release', force=False, before_replace=None):
+def build_target(target: str, files: Files, dedupe: bool, label: str, what: str, say: Say, top: str = 'release',
+                 force: bool = False, before_replace: Callable[[], None] | None = None) -> None:
     """Temp file, write, verify every file against its source, then move in place. Sources are untouched."""
     fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(target) + '.', suffix='.tmp', dir=os.path.dirname(target))
     os.close(fd)
@@ -350,7 +405,7 @@ def build_target(target, files, dedupe, label, what, say, top='release', force=F
     say('wrote %s (%s, %s bytes%s)' % (label, what, n(os.path.getsize(target)), ', deduped' if deduped else ''))
 
 
-def disk_size(path):
+def disk_size(path: str) -> int:
     if os.path.isdir(path):
         return sum(os.path.getsize(p) for p in folder_files(path).values())
     return os.path.getsize(path)
@@ -359,26 +414,26 @@ def disk_size(path):
 class Space:
     """What a run did to the disk: the sources and old rollups it replaced, against the rollups they became."""
 
-    def __init__(self, say):
+    def __init__(self, say: Say) -> None:
         self.say = say
         self.before = self.after = 0
 
-    def report(self):
+    def report(self) -> None:
         if self.before:
             saved = self.before - self.after
             self.say('space: before %s bytes, after %s bytes, saved %s bytes (%.1f%%)' % (
                 n(self.before), n(self.after), n(saved), 100.0 * saved / self.before))
 
 
-def gio_trash(p):
+def gio_trash(p: str) -> None:
     r = subprocess.run(['gio', 'trash', p], capture_output=True, text=True)
     if r.returncode:
         raise Fail('gio trash %s failed: %s' % (p, r.stderr.strip()))
 
 
-def move_trash(trash_dir):
+def move_trash(trash_dir: str) -> Trash:
     """A trash function that moves things into trash_dir. Never deletes."""
-    def trash(p):
+    def trash(p: str) -> None:
         os.makedirs(trash_dir, exist_ok=True)
         dest = os.path.join(trash_dir, os.path.basename(p.rstrip('/')))
         i = 1
@@ -389,7 +444,7 @@ def move_trash(trash_dir):
     return trash
 
 
-def make_trash(trash_dir=None):
+def make_trash(trash_dir: str | None = None) -> Trash:
     """gio trash when it is installed and no trash_dir is given, else move into trash_dir."""
     if trash_dir:
         return move_trash(trash_dir)
@@ -398,9 +453,9 @@ def make_trash(trash_dir=None):
     raise Fail('gio is not installed; pass --trash-dir DIR so sources can be moved aside')
 
 
-def rc_leftovers(root, published):
+def rc_leftovers(root: str, published: set[Version]) -> list[tuple[str, Version]]:
     """Alpha, beta and release candidate folders and zips whose release is published: [(path, version)], oldest build first."""
-    out = []
+    out: list[tuple[str, Version]] = []
     for name in sorted(os.listdir(root), key=lambda x: (vkey(x) or (), x)):
         m = RC_RE.match(name)
         p = os.path.join(root, name)
@@ -408,13 +463,14 @@ def rc_leftovers(root, published):
             continue
         if name.endswith('.zip') != os.path.isfile(p) or (not name.endswith('.zip') and not os.path.isdir(p)):
             continue
-        v = tuple(map(int, m.groups()))
+        v = version_of(m)
         if v in published:
             out.append((p, v))
     return out
 
 
-def run_step(s, root, files, label, what, dedupe, trash, say, space):
+def run_step[K](s: Step[K], root: str, files: Files, label: str, what: str, dedupe: bool, trash: Trash, say: Say,
+                space: Space) -> None:
     """Write or re-check one rollup, then trash its sources. Raises Fail with the sources in place."""
     target = s['target']
     before = sum(disk_size(p) for p, _ in s['sources'])
@@ -433,12 +489,13 @@ def run_step(s, root, files, label, what, dedupe, trash, say, space):
     space.after += os.path.getsize(target)
 
 
-def clean_rcs(root, published, dry, trash, say):
-    """Trash the alpha, beta and rc builds of every published version. Returns how many were found."""
+def clean_rcs(root: str, published: set[Version], dry: bool, trash: Trash | None, say: Say) -> int:
+    """Trash the alpha, beta and rc builds of every published version. Returns how many were found.
+    trash is None only in a dry run."""
     items = rc_leftovers(root, published)
     for p, v in items:
         name = os.path.basename(p)
-        if dry:
+        if dry or trash is None:
             say('would trash %s (release %s is published)' % (name, vs(v)))
         else:
             trash(p)
@@ -446,7 +503,8 @@ def clean_rcs(root, published, dry, trash, say):
     return len(items)
 
 
-def apply(root, dry=False, trash=None, say=print, markers=DEFAULT_MARKERS, keep_rc=False, zip_newest=False, dedupe=True):
+def apply(root: str, dry: bool = False, trash: Trash | None = None, say: Say = print, markers: Iterable[str] = DEFAULT_MARKERS,
+          keep_rc: bool = False, zip_newest: bool = False, dedupe: bool = True) -> int:
     """Carry out the plan. Returns the number of zip steps.
 
     Raises Fail when a zip does not verify; that zip's sources stay where they are.
@@ -457,7 +515,7 @@ def apply(root, dry=False, trash=None, say=print, markers=DEFAULT_MARKERS, keep_
     elsewhere it is a warning.
     """
     steps = plan(root, markers, zip_newest)
-    published = set() if keep_rc else set(scan(root, markers)[0])
+    published: set[Version] = set() if keep_rc else set(scan(root, markers)[0])
     if not steps and not (published and rc_leftovers(root, published)):
         say('nothing to do')
         return 0
@@ -470,7 +528,7 @@ def apply(root, dry=False, trash=None, say=print, markers=DEFAULT_MARKERS, keep_
         for s, files in zip(steps, all_files):
             name = os.path.basename(s['target'])
             what = '%s release%s, %s files' % (n(len(s['members'])), '' if len(s['members']) == 1 else 's', n(len(files)))
-            if dry:
+            if dry or trash is None:
                 say('would %s %s (%s); trash %s' % ('check' if s['built'] else 'write', name, what,
                     ', '.join(os.path.basename(p) for p, _ in s['sources']) or 'nothing'))
                 continue
@@ -483,22 +541,24 @@ def apply(root, dry=False, trash=None, say=print, markers=DEFAULT_MARKERS, keep_
 
 # Pre-release rollup: prereleases/alpha/, beta/ and rc/.
 
-def parse_current(ver):
+def parse_current(ver: str | None) -> tuple[int, int, int, str | None]:
     """(major, minor, patch, stage or None) of a version such as 1.2.0 or 1.2.0-beta.3 (a leading v is fine)."""
     m = re.match(r'^v?' + VER + r'(?:-(' + '|'.join(STAGES) + r')\.\d+)?$', ver or '')
     if not m:
         raise Fail('--current %r is not a version such as 1.2.0 or 1.2.0-beta.3' % ver)
-    return tuple(map(int, m.groups()[:3])) + (m.group(4),)
+    stage: str | None = m.group(4)
+    return version_of(m) + (stage,)
 
 
-def scan_pre(stage_dir, stage, markers=PRE_MARKERS):
+def scan_pre(stage_dir: str, stage: str, markers: Iterable[str] = PRE_MARKERS) -> tuple[dict[str, Found], dict[str, list[str]]]:
     """Return (found, zmembers) for one stage folder.
 
     found maps a build name (v1.2.0-beta.3) to {'dir': path or None, 'zips': [paths]};
     zmembers maps a zip path to the sorted build names it holds. Folders of another
     stage, unfinished folders and other names are left alone.
     """
-    found, zmembers = {}, {}
+    found: dict[str, Found] = {}
+    zmembers: dict[str, list[str]] = {}
     for name in sorted(os.listdir(stage_dir)):
         p = os.path.join(stage_dir, name)
         m = PRE_DIR_RE.match(name)
@@ -508,7 +568,7 @@ def scan_pre(stage_dir, stage, markers=PRE_MARKERS):
             continue
         m = PRE_ZIP_RE.match(name)
         if m and m.group(4) == stage and os.path.isfile(p):
-            base = tuple(map(int, m.groups()[:3]))
+            base = version_of(m)
             try:
                 with Rollup(p) as z:
                     tops = {i.split('/')[0] for i in z.names()}
@@ -516,14 +576,14 @@ def scan_pre(stage_dir, stage, markers=PRE_MARKERS):
                 raise Fail('%s/%s is not a readable zip (%s); nothing was changed' % (stage, name, e))
             for t in tops:
                 tm = PRE_DIR_RE.match(t)
-                if not tm or tm.group(4) != stage or tuple(map(int, tm.groups()[:3])) != base:
+                if not tm or tm.group(4) != stage or version_of(tm) != base:
                     raise Fail('%s/%s holds an unexpected top-level entry %r' % (stage, name, t))
                 found.setdefault(t, {'dir': None, 'zips': []})['zips'].append(p)
-            zmembers[p] = sorted(tops, key=vkey)
+            zmembers[p] = sorted(tops, key=build_key)
     return found, zmembers
 
 
-def plan_pre(root, current=None, markers=PRE_MARKERS):
+def plan_pre(root: str, current: str | None = None, markers: Iterable[str] = PRE_MARKERS) -> list[Step[str]]:
     """Steps for a prereleases folder, same shape as plan() with build names as members.
 
     Per stage, the builds of one version go into v<x.y.z>-<stage>.x.zip. The newest
@@ -534,37 +594,36 @@ def plan_pre(root, current=None, markers=PRE_MARKERS):
     only the newest version found counts as unreleased.
     """
     cur = parse_current(current) if current else None
-    stages = {}
+    stages: dict[str, tuple[dict[str, Found], dict[str, list[str]]]] = {}
     for st in STAGES:
         d = os.path.join(root, st)
         if os.path.isdir(d) and not os.path.islink(d):
             stages[st] = scan_pre(d, st, markers)
     if cur:
-        def open_base(b):
-            return b >= cur[:3] if cur[3] else b > cur[:3]
+        cur_base: Version = cur[:3]
+        cur_pre = cur[3]
+
+        def open_base(b: Version) -> bool:
+            return b >= cur_base if cur_pre else b > cur_base
     else:
-        bases = [vkey(nm)[:3] for f, _ in stages.values() for nm in f]
+        bases: list[Version] = [build_key(nm)[:3] for f, _ in stages.values() for nm in f]
         newest = max(bases) if bases else None
 
-        def open_base(b):
+        def open_base(b: Version) -> bool:
             return b == newest
-    out = []
+    out: list[Step[str]] = []
     for st, (found, zmembers) in stages.items():
-        by_base = {}
+        by_base: dict[Version, list[str]] = {}
         for nm in found:
-            by_base.setdefault(vkey(nm)[:3], []).append(nm)
+            by_base.setdefault(build_key(nm)[:3], []).append(nm)
         for base in sorted(by_base):
-            names = sorted(by_base[base], key=vkey)
+            names = sorted(by_base[base], key=build_key)
             if open_base(base) and found[names[-1]]['dir']:
                 names = names[:-1]
             if not names:
                 continue
             target = os.path.join(root, st, 'v%s-%s.x.zip' % (vs(base), st))
-            srcs = []
-            for nm in names:
-                for p in ([found[nm]['dir']] if found[nm]['dir'] else []) + found[nm]['zips']:
-                    if p != target and p not in [x for x, _ in srcs]:
-                        srcs.append((p, 'dir' if os.path.isdir(p) else 'zip'))
+            srcs = step_sources(found, names, target)
             done = os.path.isfile(target) and zmembers.get(target) == names
             if done and not srcs:
                 continue
@@ -572,13 +631,14 @@ def plan_pre(root, current=None, markers=PRE_MARKERS):
     return out
 
 
-def member_files_pre(step):
+def member_files_pre(step: Step[str]) -> Files:
     """arcname -> (kind, location) for every build of a pre-release step; the folder wins, else a zip."""
-    files = {}
+    files: Files = {}
     for nm in step['members']:
         e = step['found'][nm]
-        if e['dir']:
-            for arc, p in folder_files(e['dir']).items():
+        d = e['dir']
+        if d:
+            for arc, p in folder_files(d).items():
                 files['%s/%s' % (nm, arc)] = ('file', p)
         else:
             zp = [z for z in e['zips'] if z != step['target']] or e['zips']
@@ -589,7 +649,8 @@ def member_files_pre(step):
     return files
 
 
-def apply_pre(root, current=None, dry=False, trash=None, say=print, markers=PRE_MARKERS, dedupe=True):
+def apply_pre(root: str, current: str | None = None, dry: bool = False, trash: Trash | None = None, say: Say = print,
+              markers: Iterable[str] = PRE_MARKERS, dedupe: bool = True) -> int:
     """Carry out plan_pre(). Returns the number of zip steps. Same checks as apply():
     every zip is written to a temp file, verified against its sources and only then
     moved in place, and only then are the sources trashed."""
@@ -606,7 +667,7 @@ def apply_pre(root, current=None, dry=False, trash=None, say=print, markers=PRE_
         for s, files in zip(steps, all_files):
             rel = os.path.relpath(s['target'], root).replace(os.sep, '/')
             what = '%s build%s, %s files' % (n(len(s['members'])), '' if len(s['members']) == 1 else 's', n(len(files)))
-            if dry:
+            if dry or trash is None:
                 say('would %s %s (%s); trash %s' % ('check' if s['built'] else 'write', rel, what,
                     ', '.join(os.path.relpath(p, root).replace(os.sep, '/') for p, _ in s['sources']) or 'nothing'))
                 continue
@@ -618,9 +679,9 @@ def apply_pre(root, current=None, dry=False, trash=None, say=print, markers=PRE_
 
 # Upgrade: turn plain rollup zips into deduped ones.
 
-def upgrade_candidates(root):
+def upgrade_candidates(root: str) -> list[str]:
     """Every .zip directly in root and in its alpha/, beta/ and rc/ folders (a releases or a prereleases folder)."""
-    out = []
+    out: list[str] = []
     for d in [root] + [os.path.join(root, st) for st in STAGES]:
         if not os.path.isdir(d) or os.path.islink(d):
             continue
@@ -631,16 +692,16 @@ def upgrade_candidates(root):
     return out
 
 
-def rollup_shaped(names):
+def rollup_shaped(names: list[str]) -> bool:
     """True when every file sits in a v<version>/ folder, which is what a rollup holds."""
     return bool(names) and all('/' in x and TOP_RE.fullmatch(x.split('/')[0]) for x in names)
 
 
-def old_copy_path(path):
+def old_copy_path(path: str) -> str:
     return os.path.join(os.path.dirname(path), '.' + os.path.basename(path) + '.upgrade-old')
 
 
-def clear_leftover(path, trash, say):
+def clear_leftover(path: str, trash: Trash, say: Say) -> None:
     """A crash after the new zip was moved in leaves the old one next to it. Trash it once the new zip proves every file of it."""
     old = old_copy_path(path)
     if not os.path.lexists(old):
@@ -648,7 +709,7 @@ def clear_leftover(path, trash, say):
     name = os.path.basename(path)
     try:
         with Rollup(old) as z:
-            files = {nm: ('zip', (old, nm)) for nm in z.files()}
+            files: Files = {nm: ('zip', (old, nm)) for nm in z.files()}
             ok = not z.deduped and not z.check()
         why = verify(path, files) if ok and files else 'the old copy is not a plain rollup'
     except (Fail, OSError) + READ_ERRORS as e:
@@ -660,7 +721,7 @@ def clear_leftover(path, trash, say):
     say('trashed %s (left over from an interrupted upgrade of %s)' % (os.path.basename(old), name))
 
 
-def upgrade_zip(path, label, dry, trash, say):
+def upgrade_zip(path: str, label: str, dry: bool, trash: Trash | None, say: Say) -> tuple[UpgradeStatus, int, int, str]:
     """Returns (status, before, after). status: upgraded, deduped, kept, skipped or refused (with the reason as a 4th item).
     The old zip is read only until the new one is written next to it and every file of it proved by sha256 against the old one;
     then the new zip is moved in place in one step and the old zip goes to the trash."""
@@ -677,7 +738,7 @@ def upgrade_zip(path, label, dry, trash, say):
                 return 'skipped', 0, 0, 'not a rollup (files outside v<version>/ folders)'
             why = z.check()
         except READ_ERRORS as e:
-            why = str(e)
+            return 'refused', 0, 0, str(e)
         if why:
             return 'refused', 0, 0, why
     try:
@@ -685,10 +746,10 @@ def upgrade_zip(path, label, dry, trash, say):
     except Fail as e:
         return 'refused', 0, 0, str(e)
     before = os.path.getsize(path)
-    if dry:
+    if dry or trash is None:
         say('would upgrade %s (%s files, %s bytes)' % (label, n(len(names)), n(before)))
         return 'upgraded', before, before, ''
-    files = {nm: ('zip', (path, nm)) for nm in names}
+    files: Files = {nm: ('zip', (path, nm)) for nm in names}
     fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(path) + '.', suffix='.tmp', dir=os.path.dirname(path))
     os.close(fd)
     old = old_copy_path(path)
@@ -721,7 +782,7 @@ def upgrade_zip(path, label, dry, trash, say):
     return 'upgraded', before, os.path.getsize(path), ''
 
 
-def upgrade(root, dry=False, trash=None, say=print):
+def upgrade(root: str, dry: bool = False, trash: Trash | None = None, say: Say = print) -> int:
     """Turn the plain rollup zips of a releases or prereleases folder into deduped ones. Returns how many were upgraded.
 
     A zip that shares too little stays as it is, a zip that is already deduped is left alone, and one that does not
@@ -731,11 +792,12 @@ def upgrade(root, dry=False, trash=None, say=print):
     if trash is None and not dry:
         trash = make_trash()
     space = Space(say)
-    done, refused = 0, []
+    done = 0
+    refused: list[str] = []
     try:
         for p in zips:
             label = os.path.relpath(p, root).replace(os.sep, '/')
-            if not dry:
+            if not dry and trash is not None:
                 clear_leftover(p, trash, say)
             status, before, after, why = upgrade_zip(p, label, dry, trash, say)
             if status == 'upgraded':
@@ -765,7 +827,7 @@ def upgrade(root, dry=False, trash=None, say=print):
 ARCHIVE_KEEP = ('INDEX.md',)
 
 
-def archive_target(root, out):
+def archive_target(root: str, out: str) -> str:
     if not out.endswith('.zip'):
         raise Fail('--out must be a .zip name, not %r' % out)
     target = os.path.join(root, out) if not os.path.dirname(out) else os.path.abspath(out)
@@ -777,9 +839,9 @@ def archive_target(root, out):
     return target
 
 
-def archive_locals(root, target, say):
+def archive_locals(root: str, target: str, say: Say) -> dict[str, str]:
     """{name: path} of every file directly in root, except hidden files, the archive and what is not a plain file."""
-    out = {}
+    out: dict[str, str] = {}
     for name in sorted(os.listdir(root)):
         p = os.path.join(root, name)
         if name.startswith('.') or os.path.abspath(p) == os.path.abspath(target):
@@ -792,7 +854,7 @@ def archive_locals(root, target, say):
     return out
 
 
-def archive(root, out, dry=False, trash=None, say=print):
+def archive(root: str, out: str, dry: bool = False, trash: Trash | None = None, say: Say = print) -> int:
     """Roll every file directly in root into one deduped archive named out (inside root unless it has a folder part).
 
     Zips inside are walked and content shared between files is stored once. A later run adds the new files to
@@ -807,19 +869,23 @@ def archive(root, out, dry=False, trash=None, say=print):
         why = path_problem(name, 'flat')
         if why:
             raise Fail('cannot archive %r: %s; nothing was written, the sources are untouched' % (name, why))
-    files, old_names, same, add = {}, {}, [], []
+    files: Files = {}
+    old_names: dict[str, str] = {}
+    same: list[str] = []
+    add: list[str] = []
     old = os.path.lexists(target)
     if old:
         with Rollup(target) as z:
-            if not z.deduped or z.top != 'flat':
+            if not z.deduped or z.manifest is None or z.top != 'flat':
                 raise Fail('%s is not an archive made by this command; nothing was changed' % label)
             why = z.check()
             if why:
                 raise Fail('%s failed the check (%s); nothing was changed' % (label, why))
-            old_names = {nm: z.manifest['files'][nm]['sha256'] for nm in z.files()}
+            manifest = z.manifest
+            old_names = {nm: manifest['files'][nm]['sha256'] for nm in z.files()}
         files = {nm: ('zip', (target, nm)) for nm in old_names}
     for name, p in local.items():
-        src = ('file', p)
+        src: Src = ('file', p)
         if name not in old_names:
             add.append(name)
         elif sha_of(src) == old_names[name]:
@@ -850,7 +916,7 @@ def archive(root, out, dry=False, trash=None, say=print):
     if old and os.path.lexists(keep_old):
         raise Fail('%s is in the way (an interrupted run); trash it first. Nothing was changed' % os.path.basename(keep_old))
 
-    def link_old():
+    def link_old() -> None:
         try:
             os.link(target, keep_old)
         except OSError:
