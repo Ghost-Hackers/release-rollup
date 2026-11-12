@@ -1,6 +1,11 @@
 # release-rollup
 
 [![CI](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/ci.yml/badge.svg)](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/codeql.yml/badge.svg)](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/codeql.yml)
+[![Checked with Pyright](https://microsoft.github.io/pyright/img/pyright_badge.svg)](https://microsoft.github.io/pyright/)
+[![Latest release](https://img.shields.io/github/v/release/Ghost-Hackers/release-rollup?include_prereleases&sort=semver&label=release)](https://github.com/Ghost-Hackers/release-rollup/releases)
+[![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2FGhost-Hackers%2Frelease-rollup%2Fmaster%2Fpyproject.toml)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/github/license/Ghost-Hackers/release-rollup)](https://github.com/Ghost-Hackers/release-rollup/blob/master/LICENSE)
 
 A small command line tool that keeps a releases folder tidy. You publish releases as `v<version>/` folders, and release-rollup zips the old ones by version line so only the newest release stays unpacked. It is for any project that publishes releases as folders and doesn't want the old ones piling up. Content that repeats across the builds in a zip is stored once, and each zip is tested and compared by sha256 with its source before anything goes to the trash.
 
