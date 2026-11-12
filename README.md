@@ -84,6 +84,8 @@ runs the unit tests and byte-compiles the package. On Windows use `PY="py -3.14"
 
 `tools/check_release.py` checks that the version numbers agree (`versions`) and that a change under `src/` adds a line under `[Unreleased]` in the changelog (`changelog --base REF --head REF`). The release-check workflow runs both on pull requests and on version tags. A pull request that users won't notice can carry the `no changelog` label.
 
+`tools/build_release.py --out DIR [--ref TAG]` builds the release zip and its `SHA256SUMS` from a commit, reading the files from git, so nothing that isn't committed gets in. Two builds of one commit are byte for byte the same, which means you can rebuild any release after 0.2.0-beta.2 from its tag and compare the sha256 with the published one. Pushing a version tag runs the release workflow: it checks the versions, runs the tests, builds the zip, attests it and opens a draft release.
+
 `tools/e2e.sh` runs the end-to-end checks a release goes through, on a built release zip:
 
 ```sh
