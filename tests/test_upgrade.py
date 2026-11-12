@@ -147,8 +147,11 @@ class Upgrade(TD.Base):
         self.assertTrue(TD.is_deduped(good))
 
     def test_no_shared_content_keeps_the_plain_zip(self):
-        for v in ('0.1.0', '0.1.1'):
-            TD.release(self.root, v, TD.inner_zip({'a.bin': TD.noise(5000, hash(v) % 1000)}))
+        # Fixed seeds that differ: the two releases have to share no content for this test to hold.
+        blobs = {'0.1.0': TD.noise(5000, 101), '0.1.1': TD.noise(5000, 202)}
+        self.assertNotEqual(blobs['0.1.0'], blobs['0.1.1'])
+        for v, blob in blobs.items():
+            TD.release(self.root, v, TD.inner_zip({'a.bin': blob}))
         TD.release(self.root, '0.2.0', TD.app('0.2.0'))
         self.run_apply(dedupe=False)
         z = os.path.join(self.root, '0.1.zip')
