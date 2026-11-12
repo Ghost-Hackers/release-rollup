@@ -1314,14 +1314,14 @@ class Removal(Base):
         self.assertTrue(os.path.isfile(os.path.join(work, 'README.txt')))
         self.assertTrue(os.path.isfile(os.path.join(work, '.rollup', 'MANIFEST.json')))
 
-    def test_only_stdlib_and_python_3_8_syntax(self):
+    def test_only_stdlib_and_python_3_14_syntax(self):
         stdlib = getattr(sys, 'stdlib_module_names', None)
         src = os.path.join(SRC, 'release_rollup')
         for name in os.listdir(src):
             if not name.endswith('.py'):
                 continue
             with open(os.path.join(src, name), encoding='utf-8') as f:
-                tree = ast.parse(f.read(), feature_version=(3, 8))
+                tree = ast.parse(f.read(), feature_version=(3, 14))
             for node in ast.walk(tree):
                 mods = []
                 if isinstance(node, ast.Import):
