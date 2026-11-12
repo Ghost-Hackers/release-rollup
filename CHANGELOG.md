@@ -8,6 +8,14 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 - `tools/e2e.sh` runs the end-to-end checks a release goes through against the release zip, with `--cross` for a 0.1.x zip and `--self-check` to prove that a changed byte fails them.
 
+### Changed
+
+- The package passes Pyright's strict mode. The settings are in `pyproject.toml`, so editors and the command line use the same rules.
+
+### Fixed
+
+- A zip member whose data was cut short made the check pass with no reason given, so `upgrade` could trash a damaged `.upgrade-old` copy. Every read error now stops the run with a reason.
+
 ## [0.2.0-beta.1] - 2026-11-12
 
 ### Added
