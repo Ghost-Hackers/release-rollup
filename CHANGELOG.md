@@ -4,6 +4,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.2.0-beta.2] - 2026-11-12
+
 ### Added
 
 - `tools/e2e.sh` runs the end-to-end checks a release goes through against the release zip, with `--cross` for a 0.1.x zip and `--self-check` to prove that a changed byte fails them.
@@ -15,6 +17,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Fixed
 
 - A zip member whose data was cut short made the check pass with no reason given, so `upgrade` could trash a damaged `.upgrade-old` copy. Every read error now stops the run with a reason.
+- When `upgrade` keeps a damaged `.upgrade-old` copy, it now says the copy failed its check and gives the reason, instead of calling it "not a plain rollup".
 
 ## [0.2.0-beta.1] - 2026-11-12
 
