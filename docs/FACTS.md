@@ -6,7 +6,7 @@ Commands that work, and behavior worth knowing before you change something.
 
 Run the tests:
 
-```
+```sh
 cd release-rollup
 python3 -m unittest discover -s tests -v
 ```
@@ -15,7 +15,7 @@ On Windows use `py -3.14` instead of `python3` in every command here.
 
 Tests plus byte-compile:
 
-```
+```sh
 bash tools/check.sh
 ```
 
@@ -23,7 +23,7 @@ On Windows `python3` is the Microsoft Store shortcut, so pass the real interpret
 
 End-to-end checks on a release zip (0.2.0 or newer; the zip is unpacked into a temp folder):
 
-```
+```sh
 bash tools/e2e.sh release-rollup-<version>.zip
 bash tools/e2e.sh release-rollup-<version>.zip --cross release-rollup-0.1.0.zip
 bash tools/e2e.sh --self-check release-rollup-<version>.zip
@@ -33,19 +33,19 @@ On Windows from Git Bash set `PY="py -3.14"` first. A SHA256SUMS file next to th
 
 Run from a checkout without installing:
 
-```
+```sh
 PYTHONPATH=src python3 -m release_rollup run --root /path/to/releases --dry-run
 ```
 
 Install the console script into a virtualenv:
 
-```
+```sh
 python3 -m venv .venv && .venv/bin/pip install . && .venv/bin/release-rollup run --root /path/to/releases
 ```
 
 Try it on made-up releases:
 
-```
+```sh
 T=$(mktemp -d)
 for v in 0.1.0 0.1.1 0.2.0 0.2.1; do
   mkdir -p $T/v$v/assets; echo n > $T/v$v/RELEASE_NOTES.md; echo s > $T/v$v/SHA256SUMS; echo $v > $T/v$v/assets/a
@@ -57,7 +57,7 @@ Expected result: `0.1.zip`, `v0.2.0.zip` and `v0.2.1/` in `$T`, the old folders 
 
 Tidy the tester builds after each publish:
 
-```
+```sh
 release-rollup pre --root prereleases --current <VERSION>
 ```
 

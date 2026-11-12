@@ -69,7 +69,7 @@ The archive has fixed timestamps and sorted entries, so zipping the same release
 
 A rollup is a normal zip, so its name, the rules above and every zip tool keep working. What changes is what's inside:
 
-```
+```text
 README.txt                  how to restore, with a script for when the tool is gone
 .rollup/blobs/<sha256>      one distinct piece of content
 .rollup/skeleton/<sha256>   an inner zip with its member data cut out

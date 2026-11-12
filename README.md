@@ -4,7 +4,7 @@ A small command line tool that keeps a releases folder tidy. You publish release
 
 Before, with 0.2.0 just published:
 
-```
+```text
 releases/
   v0.1.0/
   v0.1.1/
@@ -14,7 +14,7 @@ releases/
 
 After `release-rollup run --root releases`:
 
-```
+```text
 releases/
   0.1.zip
   v0.2.0/
@@ -28,20 +28,20 @@ Python 3.14 or later and the standard library, nothing else. Tested on Linux and
 
 From an unpacked release zip or a clone:
 
-```
+```sh
 pip install .
 ```
 
 Or run it without installing, from the `src/` folder:
 
-```
+```sh
 cd src
 python3 -m release_rollup run --root path/to/releases --dry-run
 ```
 
 ## Quick start
 
-```
+```sh
 # see what would happen, nothing is changed
 release-rollup run --root releases --dry-run
 # do it
@@ -74,7 +74,7 @@ release-rollup restore releases/0.1.zip --out restored
 
 ## Development
 
-```
+```sh
 bash tools/check.sh
 ```
 
@@ -82,7 +82,7 @@ runs the unit tests and byte-compiles the package. On Windows use `PY="py -3.14"
 
 `tools/e2e.sh` runs the end-to-end checks a release goes through, on a built release zip:
 
-```
+```sh
 bash tools/e2e.sh release-rollup-0.2.0.zip [--cross release-rollup-0.1.0.zip]
 bash tools/e2e.sh --self-check release-rollup-0.2.0.zip
 ```

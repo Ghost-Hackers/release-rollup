@@ -4,7 +4,7 @@
 
 ## run
 
-```
+```sh
 release-rollup run [--root DIR] [--dry-run] [--marker NAME ...] [--trash-dir DIR] [--keep-rc|--keep-pre] [--zip-newest] [--no-dedupe]
 ```
 
@@ -34,7 +34,7 @@ Replaced folders and zips are sent to the trash with `gio trash`. If `gio` is no
 
 ## pre
 
-```
+```sh
 release-rollup pre [--root DIR] [--current VERSION] [--dry-run] [--marker NAME ...] [--trash-dir DIR] [--no-dedupe]
 ```
 
@@ -53,20 +53,20 @@ Older builds of one version in a stage folder go into `v<x.y.z>-<stage>.x.zip`. 
 
 Before:
 
-```
+```text
 prereleases/alpha/
   v1.0.0-alpha.4/
   v1.0.0-alpha.5/
   v1.0.0-alpha.6/
 ```
 
-```
+```console
 $ release-rollup pre --root prereleases --current 1.0.0-alpha.6
 ```
 
 After:
 
-```
+```text
 prereleases/alpha/
   v1.0.0-alpha.x.zip      (holds alpha.4 and alpha.5)
   v1.0.0-alpha.6/
@@ -80,7 +80,7 @@ A rollup where sharing saves under 1,024 bytes or under 1% stays a plain zip, by
 
 Each run that changes something ends with what it did to the disk: the sources and old zips it replaced against the zips they became.
 
-```
+```text
 space: before 41,026,579 bytes, after 13,698,897 bytes, saved 27,327,682 bytes (66.6%)
 ```
 
@@ -90,11 +90,11 @@ On Linux the same names only produce a `warning:` line and the rollup is written
 
 ## restore
 
-```
+```sh
 release-rollup restore ROLLUP.zip [--out DIR] [--check] [--max-size BYTES]
 ```
 
-```
+```sh
 release-rollup restore ROLLUP.zip --out DIR
 release-rollup restore ROLLUP.zip --check
 ```
@@ -110,7 +110,7 @@ If you don't have the tool, `README.txt` in the zip has a short Python script th
 
 ## upgrade
 
-```
+```sh
 release-rollup upgrade [--root DIR] [--dry-run] [--trash-dir DIR]
 ```
 
@@ -126,7 +126,7 @@ A zip that fails its check, or can't be stored in a rollup, is reported and not 
 
 ## archive
 
-```
+```sh
 release-rollup archive --out NAME.zip [--root DIR] [--dry-run] [--trash-dir DIR]
 ```
 
@@ -153,7 +153,7 @@ An archive always uses the deduplicated form, even when nothing is shared, so ad
 
 Before, with 0.2.0 just published:
 
-```
+```text
 releases/
   v0.1.0/
   v0.1.1/
@@ -161,7 +161,7 @@ releases/
   v0.2.0/
 ```
 
-```
+```console
 $ release-rollup run --root releases --dry-run
 would write 0.1.zip (3 releases, 9 files); trash v0.1.0, v0.1.1, v0.1.2
 $ release-rollup run --root releases
@@ -173,7 +173,7 @@ trashed v0.1.2
 
 After:
 
-```
+```text
 releases/
   0.1.zip
   v0.2.0/
@@ -181,7 +181,7 @@ releases/
 
 Release candidates of a published version go the same way:
 
-```
+```console
 $ release-rollup run --root releases --dry-run
 would trash 0.2.0-rc.4 (release 0.2.0 is published)
 would trash v0.2.0-rc.5 (release 0.2.0 is published)
