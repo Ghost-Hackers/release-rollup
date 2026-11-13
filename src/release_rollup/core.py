@@ -90,8 +90,18 @@ def vs(t: Version) -> str:
 
 
 def folder_files(path: str) -> dict[str, str]:
+    """arcname -> path for every file under path. Raises Fail for a subfolder that can't be read or a
+    link to another folder (a symlink, or a junction on Windows): os.walk passes over both quietly,
+    and their files would be missing from the rollup while the folder still went to the trash."""
+    def refuse(e: OSError) -> None:
+        raise Fail('cannot read %s (%s); nothing was changed' % (e.filename or path, reason(e)))
+
     out: dict[str, str] = {}
-    for d, _, fs in os.walk(path):
+    for d, dirs, fs in os.walk(path, onerror=refuse):
+        for sub in dirs:
+            p = os.path.join(d, sub)
+            if os.path.islink(p) or os.path.isjunction(p):
+                raise Fail('%s links to another folder, which a rollup can\'t hold; nothing was changed' % p)
         for f in fs:
             p = os.path.join(d, f)
             out[os.path.relpath(p, path).replace(os.sep, '/')] = p
