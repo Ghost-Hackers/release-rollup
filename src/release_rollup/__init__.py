@@ -8,4 +8,4 @@ try:
     with open(_os.path.join(_os.path.dirname(__file__), 'VERSION')) as _f:
         __version__ = _f.read().strip()
 except OSError:
-    __version__ = '0.1.0'
+    __version__ = '0.1.1-beta.1'
