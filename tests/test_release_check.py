@@ -241,6 +241,17 @@ class Changelog(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn('src/release_rollup/odd "name" here.py', problems[0])
 
+    def test_linux_a_source_file_name_that_is_not_utf8_counts_as_a_change(self) -> None:
+        name = os.path.join(os.fsencode(self.root), b'src', b'release_rollup', b'bad-\xff.py')
+        with open(name, 'wb') as f:
+            f.write(b'x = 1\n')
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'odd name')
+        problems = check_release.check_changelog(self.root, self.base, 'HEAD')
+        self.assertEqual(len(problems), 1)
+        self.assertIn('src/release_rollup/bad-\\xff.py', problems[0])
+        problems[0].encode('utf-8')  # printable as is
+
     def test_a_bad_ref_is_an_error(self) -> None:
         self.assertTrue(check_release.check_changelog(self.root, 'no-such-ref', 'HEAD'))
 
