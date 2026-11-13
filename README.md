@@ -85,7 +85,9 @@ release-rollup restore releases/0.1.zip --out restored
 bash tools/check.sh
 ```
 
-runs the unit tests and byte-compiles the package. On Windows use `PY="py -3.14" bash tools/check.sh` from Git Bash.
+runs the unit tests under coverage.py, fails unless every line and branch is covered, and byte-compiles the package. It needs coverage.py 7.17.3: `python3 -m pip install coverage==7.17.3`, in a venv if you prefer. Lines no test can reach are listed in `tools/coverage_exclusions.tsv` with the reason, and `tools/check_coverage.py` fails if one of them gets covered later or its line changes.
+
+Some tests fill a disk. On Linux `check.sh` mounts a 4 MB tmpfs for them in a private namespace, no root needed. On Windows, set `RR_SMALLFS` to a folder on a drive of a few MB and `RR_NOLINKS_FS` to one on a FAT32 drive before running it; CI makes both. Run it as a normal user: root ignores file permissions, so the tests that lock files can't work. On Windows use `PY="py -3.14" bash tools/check.sh` from Git Bash.
 
 `tools/check_release.py` checks that the version numbers agree (`versions`) and that a change under `src/` adds a line under `[Unreleased]` in the changelog (`changelog --base REF --head REF`). The release-check workflow runs both on pull requests and on version tags. A pull request that users won't notice can carry the `no changelog` label.
 

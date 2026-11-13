@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the unit tests and byte-compiles the package.
+# Runs the unit tests under coverage.py, checks the coverage and byte-compiles the package.
 #
 # Some tests fill a real disk and need RR_SMALLFS, a folder on a small filesystem (see tests/smallfs.py).
 # CI sets it. On Linux, when it isn't set, this script runs itself again in a private mount namespace
@@ -14,6 +14,13 @@ PY=${PY:-python3}
 # refusal they check for. Run as a normal user (in a container: add one and use it).
 if [ "$(uname -s)" = Linux ] && [ "$(id -u)" -eq 0 ]; then
   echo "check.sh: running as root, so the file permission tests can't work. Run it as a normal user." >&2
+  exit 1
+fi
+
+COVERAGE_VERSION=7.17.3
+if ! $PY -c 'import coverage' 2>/dev/null; then
+  echo "check.sh: coverage.py is missing. Install it with:" >&2
+  echo "  $PY -m pip install coverage==$COVERAGE_VERSION" >&2
   exit 1
 fi
 
@@ -34,6 +41,13 @@ if [ -z "${RR_SMALLFS:-}" ] && [ "$(uname -s)" = Linux ]; then
   exit $rc
 fi
 
-$PY -m unittest discover -s tests
+covdir=$(mktemp -d "${TMPDIR:-/tmp}/rr-coverage.XXXXXX")
+trap 'rm -rf "$covdir"' EXIT
+# Child Pythons write their own data files here; combine merges them.
+export COVERAGE_FILE="$covdir/.coverage"
+$PY -m coverage run -m unittest discover -s tests
+$PY -m coverage combine -q
+$PY -m coverage json -q -o "$covdir/coverage.json"
+$PY tools/check_coverage.py "$covdir/coverage.json"
 $PY -m compileall -q src tests
 echo "check ok"

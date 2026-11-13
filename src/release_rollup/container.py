@@ -106,7 +106,7 @@ def sha_stream(f: Reader) -> str:
 
 
 def blob_key(data_sha: str) -> str:
-    """The name of a blob. A separate step so a test can force a collision."""
+    """The name of a blob in the rollup."""
     return data_sha
 
 

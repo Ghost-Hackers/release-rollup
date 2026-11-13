@@ -14,6 +14,7 @@ import zipfile
 from collections.abc import Callable, Mapping
 
 import hostcat
+import smallfs
 import test_dedupe as TD
 from release_rollup import cli
 from release_rollup.container import Rollup
@@ -314,15 +315,16 @@ class Command(TD.Base):
                 self.assertEqual(code, 1)
                 self.assertOneLine(err, 'error: %s: Permission denied' % locked)
 
-    def test_linux_restore_output_failing_is_one_clean_line(self):
-        # restore prints its summary after the files are written, past the part that turns OSErrors
-        # into a refusal. With stdout unbuffered on a full device that print fails with ENOSPC.
+    def test_restore_output_failing_is_one_clean_line(self):
+        # restore's summary print sits outside its OSError handling, so on a full disk it raises ENOSPC.
         z = self.rollup()
-        with open('/dev/full', 'w') as full:
+        with open(os.path.join(smallfs.folder(self), 'stdout'), 'wb', buffering=0) as full:
+            smallfs.fill(full)
             r = subprocess.run([sys.executable, '-u', '-m', 'release_rollup', 'restore', z, '--out', self.out],
                                stdout=full, stderr=subprocess.PIPE, text=True, env=dict(os.environ, PYTHONPATH=TD.SRC))
         self.assertEqual(r.returncode, 1)
-        self.assertOneLine(r.stderr, 'error: a file: No space left on device')
+        self.assertOneLine(r.stderr, 'error: a file: ')
+        self.assertRegex(r.stderr, '^error: a file: ' + smallfs.FULL)
         self.assertEqual(sorted(os.listdir(self.out)), ['v0.1.0', 'v0.1.1', 'v0.1.2'])
 
     def test_no_command_prints_the_usage(self):

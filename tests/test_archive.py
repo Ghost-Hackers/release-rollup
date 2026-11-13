@@ -290,8 +290,8 @@ class Safety(Base):
         self.assertEqual(self.visible(), ['a.bin', OUT])
 
     def test_linux_refuses_hostile_names_on_disk(self):
-        # Linux only: these names exist on a Linux disk. Windows cannot hold them (backslash, drive colon,
-        # control characters); there they only come inside an archive, see the next test.
+        # Linux only: Windows can't create these names. test_hostile_names_inside_an_archive_are_refused_on_every_host
+        # covers them inside an archive.
         for bad in ('a\\b.zip', 'new\nline.zip', 'c:evil.zip', 'ctl\x01.zip', 'tab\t.zip'):
             with self.subTest(bad):
                 d = os.path.join(self.tmp, 'h%d' % len(os.listdir(self.tmp)))
@@ -301,6 +301,16 @@ class Safety(Base):
                 with self.assertRaisesRegex(Fail, 'cannot archive'):
                     archive(d, OUT, trash=core.move_trash(self.trash_dir), say=QUIET)
                 self.assertEqual(sorted(os.listdir(d)), sorted(['ok.bin', bad]))
+
+    def test_refuses_a_name_that_is_not_unicode_on_disk(self):
+        # '\udc80' is the byte 0x80 in a Linux name and a lone UTF-16 surrogate in a Windows name.
+        # Both disks hold it, a manifest can't.
+        bad = 'report\udc80.zip'
+        write(os.path.join(self.root, 'ok.bin'), b'1' * 900)
+        write(os.path.join(self.root, bad), b'2')
+        with self.assertRaisesRegex(Fail, 'cannot archive'):
+            self.run_archive()
+        self.assertEqual(sorted(os.listdir(self.root)), sorted(['ok.bin', bad]))
 
     def archive_holding(self, name: str, data: bytes = b'q' * 900) -> bytes:
         """An archive in self.root whose manifest names a file `name`, as an archive made elsewhere could."""
