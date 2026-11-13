@@ -1,3 +1,4 @@
 # Tests that run on one host only: <test id><TAB><linux|windows>. Every other test runs on both hosts
 # and checks the behavior of the host it runs on. test_hosts.py checks this file.
 test_build_release.Build.test_linux_a_dangling_symlink_in_place_of_an_output_is_refused	linux
+test_release_check.Changelog.test_linux_a_source_file_with_a_quote_in_its_name_counts_as_a_change	linux

@@ -228,6 +228,19 @@ class Changelog(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn('src/release_rollup/a.md', problems[0])
 
+    def test_a_source_file_with_an_accented_name_counts_as_a_change(self) -> None:
+        # git quotes names like this one unless asked for them raw.
+        self.commit({'src/release_rollup/café.py': 'x = 1\n'})
+        problems = check_release.check_changelog(self.root, self.base, 'HEAD')
+        self.assertEqual(len(problems), 1)
+        self.assertIn('src/release_rollup/café.py', problems[0])
+
+    def test_linux_a_source_file_with_a_quote_in_its_name_counts_as_a_change(self) -> None:
+        self.commit({'src/release_rollup/odd "name" here.py': 'x = 1\n'})
+        problems = check_release.check_changelog(self.root, self.base, 'HEAD')
+        self.assertEqual(len(problems), 1)
+        self.assertIn('src/release_rollup/odd "name" here.py', problems[0])
+
     def test_a_bad_ref_is_an_error(self) -> None:
         self.assertTrue(check_release.check_changelog(self.root, 'no-such-ref', 'HEAD'))
 

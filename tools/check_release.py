@@ -96,10 +96,12 @@ def check_changelog(root: str, base: str, head: str) -> list[str]:
     merge_base = _git(root, 'merge-base', base, head)
     start = merge_base.stdout.strip() if merge_base.returncode == 0 else base
     # --no-renames lists both paths of a moved file, so a file moved out of src/ still counts.
-    diff = _git(root, 'diff', '--name-only', '--no-renames', start, head)
+    # -z gives the names as they are: without it git quotes a name like src/café.py, and the
+    # quoted form doesn't start with src/.
+    diff = _git(root, 'diff', '--name-only', '--no-renames', '-z', start, head)
     if diff.returncode != 0:
         return [f'git diff {start} {head} failed: {diff.stderr.strip()}']
-    changed = [p for p in diff.stdout.splitlines() if p.startswith('src/')]
+    changed = [p for p in diff.stdout.split('\0') if p.startswith('src/')]
     if not changed:
         return []
 
