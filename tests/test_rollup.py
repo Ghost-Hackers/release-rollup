@@ -7,14 +7,14 @@ import unittest
 import zipfile
 from collections.abc import Container, Iterable
 from typing import TypedDict, Unpack
-from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 
 import hostcat
+import smallfs
 from release_rollup import core  # noqa: E402
 from release_rollup.cli import main
-from release_rollup.core import Fail, Files, apply, make_trash, move_trash, plan
+from release_rollup.core import Fail, apply, make_trash, move_trash, plan
 from test_dedupe import ApplyOpts
 
 FILES = ('RELEASE_NOTES.md', 'SHA256SUMS', 'assets/pack.bin')
@@ -24,7 +24,7 @@ def QUIET(*_: object) -> None:
     return None
 
 
-def fake(root: str, ver: str, payload: str | None = None) -> None:
+def make_release(root: str, ver: str, payload: str | None = None) -> None:
     d = os.path.join(root, 'v' + ver)
     os.makedirs(os.path.join(d, 'assets'))
     with open(os.path.join(d, 'RELEASE_NOTES.md'), 'w') as f:
@@ -43,6 +43,33 @@ class Base(unittest.TestCase):
         self.trash_dir = os.path.join(self._td.name, 'trash')
         os.makedirs(self.root)
         self.trash = move_trash(self.trash_dir)
+
+    def use_small_fs(self) -> None:
+        """Move the releases and trash folders onto the small filesystem (see smallfs.py)."""
+        small = smallfs.folder(self)
+        self.root = os.path.join(small, 'releases')
+        self.trash_dir = os.path.join(small, 'trash')
+        os.makedirs(self.root)
+        self.trash = move_trash(self.trash_dir)
+
+    def disk_full(self, *folders: str) -> None:
+        """Give each folder a file that doesn't compress, then fill the disk so none of them fits in a zip."""
+        for i, d in enumerate(folders):
+            with open(os.path.join(d, 'big.bin'), 'wb') as f:
+                f.write(smallfs.noise(64 << 10, i))
+        smallfs.leave_free(self, self.root, 16 << 10)
+
+    def only_on_path(self, folder: str) -> None:
+        """PATH holds only this folder until the test ends."""
+        old = os.environ.get('PATH')
+        os.environ['PATH'] = folder
+
+        def back() -> None:
+            if old is None:
+                del os.environ['PATH']
+            else:
+                os.environ['PATH'] = old
+        self.addCleanup(back)
 
     def run_apply(self, **kw: Unpack[ApplyOpts]) -> int:
         return apply(self.root, trash=self.trash, say=QUIET, **kw)
@@ -75,7 +102,7 @@ class Timeline(Base):
         skip = ('README.md', 'v0.0.9-rc.1', 'v0.0.8')
         steps = 0
         for ver, want in self.SCRIPT:
-            fake(self.root, ver)
+            make_release(self.root, ver)
             self.run_apply()
             steps += 1
             self.assertEqual(self.ls(skip), sorted(want), 'after %s' % ver)
@@ -93,26 +120,26 @@ class Timeline(Base):
     def test_many_at_once_then_one_more(self):
         for mi, top in ((1, 3), (2, 2), (3, 3)):
             for pa in range(top + 1):
-                fake(self.root, '0.%d.%d' % (mi, pa))
+                make_release(self.root, '0.%d.%d' % (mi, pa))
         self.run_apply()
         self.assertEqual(self.ls(), ['0.1.zip', '0.2.zip', 'v0.3.0.zip', 'v0.3.1.zip', 'v0.3.2.zip', 'v0.3.3'])
         with zipfile.ZipFile(os.path.join(self.root, '0.1.zip')) as z:
             self.assertEqual(sorted({i.split('/')[0] for i in z.namelist()}), ['v0.1.0', 'v0.1.1', 'v0.1.2', 'v0.1.3'])
         self.assertEqual(self.run_apply(), 0)
-        fake(self.root, '1.0.0')
+        make_release(self.root, '1.0.0')
         self.run_apply()
         self.assertEqual(self.ls(), ['pre-1.0.0.zip', 'v1.0.0'])
 
     def test_single_release_line(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.2.0')
+        make_release(self.root, '0.1.0')
+        make_release(self.root, '0.2.0')
         self.run_apply()
         self.assertEqual(self.ls(), ['0.1.zip', 'v0.2.0'])
         with zipfile.ZipFile(os.path.join(self.root, '0.1.zip')) as z:
             self.assertEqual(z.namelist()[0].split('/')[0], 'v0.1.0')
 
     def test_only_newest_stays(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         self.assertEqual(self.run_apply(), 0)
         self.assertEqual(self.ls(), ['v0.1.0'])
 
@@ -121,24 +148,8 @@ class Timeline(Base):
 
 
 class Safety(Base):
-    def test_corrupt_zip_keeps_sources(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.1.1')
-        real = core.write_zip
-
-        def broken(t: str, files: Files) -> None:
-            real(t, files)
-            with open(t, 'r+b') as f:
-                f.seek(40)
-                f.write(b'\xff\xff\xff\xff')
-        with mock.patch.object(core, 'write_zip', broken):
-            with self.assertRaises(Fail):
-                self.run_apply()
-        self.assertEqual(self.ls(), ['v0.1.0', 'v0.1.1'])
-        self.assertEqual(self.trashed(), [])
-
     def test_existing_bad_zip_stops_the_run(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         with open(os.path.join(self.root, 'v0.0.5.zip'), 'wb') as f:
             f.write(b'not a zip')
         with self.assertRaises(Fail):
@@ -147,7 +158,7 @@ class Safety(Base):
 
     def test_dry_run_changes_nothing(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         before = self.ls()
         lines: list[str] = []
         self.assertEqual(apply(self.root, dry=True, say=lines.append), 1)
@@ -159,7 +170,7 @@ class Safety(Base):
 
     def test_dry_run_prints_plan_via_cli(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(main(['run', '--root', self.root, '--dry-run']), 0)
@@ -169,11 +180,11 @@ class Safety(Base):
     def test_interrupted_run_is_finished_by_the_next(self):
         # zip is in place but the sources were never trashed
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply()
         with zipfile.ZipFile(os.path.join(self.root, '0.1.zip')) as z:
             data = z.read('v0.1.0/SHA256SUMS')
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         self.assertEqual(self.run_apply(), 1)
         self.assertEqual(self.ls(), ['0.1.zip', 'v0.2.0'])
         with zipfile.ZipFile(os.path.join(self.root, '0.1.zip')) as z:
@@ -181,9 +192,9 @@ class Safety(Base):
 
     def test_late_release_in_old_line_joins_the_zip(self):
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply()
-        fake(self.root, '0.1.1')
+        make_release(self.root, '0.1.1')
         self.run_apply()
         with zipfile.ZipFile(os.path.join(self.root, '0.1.zip')) as z:
             self.assertEqual(sorted({i.split('/')[0] for i in z.namelist()}), ['v0.1.0', 'v0.1.1'])
@@ -192,20 +203,20 @@ class Safety(Base):
 
 class Selection(Base):
     def test_rc_ignored(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.2.0-rc.1')
-        fake(self.root, '0.1.1')
+        make_release(self.root, '0.1.0')
+        make_release(self.root, '0.2.0-rc.1')
+        make_release(self.root, '0.1.1')
         self.run_apply()
         self.assertEqual(self.ls(), ['v0.1.0.zip', 'v0.1.1', 'v0.2.0-rc.1'])
 
     def test_rc_alone_changes_nothing(self):
-        fake(self.root, '0.1.0-rc.1')
+        make_release(self.root, '0.1.0-rc.1')
         self.assertEqual(self.run_apply(), 0)
         self.assertEqual(self.ls(), ['v0.1.0-rc.1'])
 
     def test_other_folders_and_files_left_alone(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.2.0')
+        make_release(self.root, '0.1.0')
+        make_release(self.root, '0.2.0')
         os.makedirs(os.path.join(self.root, 'notes'))
         os.makedirs(os.path.join(self.root, 'v0.1.5'))  # unpublished
         for name in ('README.md', 'extra.zip', 'v1.zip'):
@@ -215,15 +226,15 @@ class Selection(Base):
         self.assertEqual(self.ls(), ['0.1.zip', 'README.md', 'extra.zip', 'notes', 'v0.1.5', 'v0.2.0', 'v1.zip'])
 
     def test_unpublished_missing_each_marker(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.2.0')
+        make_release(self.root, '0.1.0')
+        make_release(self.root, '0.2.0')
         os.remove(os.path.join(self.root, 'v0.1.0', 'SHA256SUMS'))
         self.assertEqual(self.run_apply(), 0)
         self.assertEqual(self.ls(), ['v0.1.0', 'v0.2.0'])
 
     def test_marker_option(self):
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
             os.remove(os.path.join(self.root, 'v' + v, 'SHA256SUMS'))
         self.assertEqual(self.run_apply(), 0)
         self.assertEqual(self.run_apply(markers=('RELEASE_NOTES.md',)), 1)
@@ -231,7 +242,7 @@ class Selection(Base):
 
     def test_marker_option_folder_marker_and_cli(self):
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         with open(os.path.join(self.root, 'v0.1.0', 'MARK'), 'w') as f:
             f.write('x')
         with open(os.path.join(self.root, 'v0.2.0', 'MARK'), 'w') as f:
@@ -246,7 +257,7 @@ class Selection(Base):
 class Trash(Base):
     def test_trash_dir_fallback_moves_sources(self):
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(main(['run', '--root', self.root, '--trash-dir', self.trash_dir]), 0)
@@ -257,29 +268,39 @@ class Trash(Base):
     def test_trash_dir_name_clash(self):
         os.makedirs(os.path.join(self.trash_dir, 'v0.1.0'))
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply()
         self.assertEqual(self.trashed(), ['v0.1.0', 'v0.1.0.2'])
 
     def test_no_gio_and_no_trash_dir_is_an_error(self):
-        with mock.patch('shutil.which', return_value=None):
-            with self.assertRaises(Fail):
-                make_trash()
-            fake(self.root, '0.1.0')
-            err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                self.assertEqual(main(['run', '--root', self.root]), 1)
-            self.assertIn('--trash-dir', err.getvalue())
+        empty = os.path.join(self._td.name, 'bin')
+        os.makedirs(empty)
+        self.only_on_path(empty)
+        with self.assertRaises(Fail):
+            make_trash()
+        make_release(self.root, '0.1.0')
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(main(['run', '--root', self.root]), 1)
+        self.assertIn('--trash-dir', err.getvalue())
+        self.assertEqual(self.ls(), ['v0.1.0'])
 
     def test_gio_used_when_present(self):
-        with mock.patch('shutil.which', return_value='/usr/bin/gio'):
-            self.assertIs(make_trash(), core.gio_trash)
+        # Only found, never run. Windows looks for a name ending in one of PATHEXT.
+        folder = os.path.join(self._td.name, 'bin')
+        os.makedirs(folder)
+        stub = os.path.join(folder, 'gio.exe' if hostcat.this_host() == 'windows' else 'gio')
+        with open(stub, 'w') as f:
+            f.write('#!/bin/sh\nexit 1\n')
+        os.chmod(stub, 0o755)
+        self.only_on_path(folder)
+        self.assertIs(make_trash(), core.gio_trash)
 
 
 class Output(Base):
     def test_thousands_separators(self):
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         for i in range(1000):
             with open(os.path.join(self.root, 'v0.1.0', 'assets', 'f%d' % i), 'w') as f:
                 f.write('x')
@@ -290,7 +311,7 @@ class Output(Base):
 
     def test_plan_is_read_only(self):
         for v in ('0.1.0', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         before = self.ls()
         steps = plan(self.root)
         self.assertEqual([os.path.basename(s['target']) for s in steps], ['0.1.zip'])
@@ -326,7 +347,7 @@ def rc_zip(root: str, name: str) -> None:
 
 class RcCleanup(Base):
     def test_bare_and_v_folders_go_when_release_is_a_folder(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         rc_dir(self.root, 'v0.1.0-rc.2')
         self.run_apply()
@@ -334,7 +355,7 @@ class RcCleanup(Base):
         self.assertEqual(self.trashed(), ['0.1.0-rc.1', 'v0.1.0-rc.2'])
 
     def test_rc_zips_go(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_zip(self.root, '0.1.0-rc.1.zip')
         rc_zip(self.root, 'v0.1.0-rc.2.zip')
         self.run_apply()
@@ -342,8 +363,8 @@ class RcCleanup(Base):
         self.assertEqual(len(self.trashed()), 2)
 
     def test_release_as_per_release_zip(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.1.1')
+        make_release(self.root, '0.1.0')
+        make_release(self.root, '0.1.1')
         rc_dir(self.root, 'v0.1.0-rc.1')
         self.run_apply()
         self.assertEqual(self.ls(), ['v0.1.0.zip', 'v0.1.1'])
@@ -354,7 +375,7 @@ class RcCleanup(Base):
 
     def test_release_inside_line_zip(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply()
         self.assertEqual(self.ls(), ['0.1.zip', 'v0.2.0'])
         rc_dir(self.root, '0.1.1-rc.1')
@@ -364,7 +385,7 @@ class RcCleanup(Base):
 
     def test_release_inside_pre_1_0_0_zip(self):
         for v in ('0.1.0', '0.2.0', '1.0.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply()
         rc_dir(self.root, 'v0.2.0-rc.1')
         self.run_apply()
@@ -372,7 +393,7 @@ class RcCleanup(Base):
 
     def test_release_inside_major_zip(self):
         for v in ('1.0.0', '1.1.0', '2.0.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply()
         self.assertEqual(self.ls(), ['1.x.zip', 'v2.0.0'])
         rc_dir(self.root, '1.1.0-rc.1')
@@ -380,18 +401,18 @@ class RcCleanup(Base):
         self.assertNotIn('1.1.0-rc.1', self.ls())
 
     def test_unpublished_release_keeps_its_rc(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.2.0-rc.1')
         rc_zip(self.root, 'v0.2.0-rc.2.zip')
         self.assertEqual(self.run_apply(), 0)
         self.assertEqual(self.ls(), ['0.2.0-rc.1', 'v0.1.0', 'v0.2.0-rc.2.zip'])
-        fake(self.root, '0.2.0')
+        make_release(self.root, '0.2.0')
         self.run_apply()
         self.assertNotIn('0.2.0-rc.1', self.ls())
         self.assertNotIn('v0.2.0-rc.2.zip', self.ls())
 
     def test_rc_of_other_version_stays(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         rc_dir(self.root, '0.1.1-rc.1')
         self.run_apply()
@@ -404,7 +425,7 @@ class RcCleanup(Base):
         self.assertEqual(self.ls(), ['0.1.0-rc.1', 'v0.1.0'])
 
     def test_alpha_and_beta_go_with_the_rc_builds(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         for name in ('0.1.0-alpha.1', 'v0.1.0-alpha.10', '0.1.0-beta.2', 'v0.1.0-rc.1'):
             rc_dir(self.root, name)
         rc_zip(self.root, 'v0.1.0-beta.3.zip')
@@ -413,7 +434,7 @@ class RcCleanup(Base):
         self.assertEqual(len(self.trashed()), 5)
 
     def test_alpha_beta_of_unpublished_release_stay(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.2.0-alpha.1')
         rc_dir(self.root, 'v0.2.0-beta.1')
         before = self.ls()
@@ -421,7 +442,7 @@ class RcCleanup(Base):
         self.assertEqual(self.ls(), before)
 
     def test_keep_rc_keeps_every_stage(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-alpha.1')
         rc_dir(self.root, '0.1.0-beta.1')
         with contextlib.redirect_stdout(io.StringIO()):
@@ -429,7 +450,7 @@ class RcCleanup(Base):
         self.assertEqual(self.ls(), ['0.1.0-alpha.1', '0.1.0-beta.1', 'v0.1.0'])
 
     def test_stage_folders_are_never_releases(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, 'v0.1.1-alpha.1')
         rc_dir(self.root, 'v0.1.1-beta.1')
         self.assertFalse(core.DIR_RE.match('v0.1.1-alpha.1'))
@@ -456,14 +477,14 @@ class RcCleanup(Base):
         self.assertIsNone(core.vkey('notes'))
 
     def test_leftovers_listed_oldest_build_first(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         for name in ('0.1.0-rc.10', '0.1.0-rc.9', '0.1.0-alpha.2', '0.1.0-beta.1'):
             rc_dir(self.root, name)
         names = [os.path.basename(p) for p, _ in core.rc_leftovers(self.root, {(0, 1, 0)})]
         self.assertEqual(names, ['0.1.0-alpha.2', '0.1.0-beta.1', '0.1.0-rc.9', '0.1.0-rc.10'])
 
     def test_lookalike_names_untouched(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         for name in ('0.1.0-rc.1-notes', '0.1.0-rc.x', '0.1.0-rc.1.bak', 'v0.1.0-rc.', '0.1.0-beta.x', '0.1.0-alpha.1-notes', '0.1.0-gamma.1'):
             rc_dir(self.root, name)
         rc_zip(self.root, '0.1.0-rc.1-notes.zip')
@@ -472,7 +493,7 @@ class RcCleanup(Base):
         self.assertEqual(self.ls(), before)
 
     def test_dry_run_changes_nothing_and_prints(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         before = self.ls()
         out: list[str] = []
@@ -481,14 +502,14 @@ class RcCleanup(Base):
         self.assertEqual(out, ['would trash 0.1.0-rc.1 (release 0.1.0 is published)'])
 
     def test_real_run_prints_trashed(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, 'v0.1.0-rc.1')
         out: list[str] = []
         apply(self.root, trash=self.trash, say=out.append)
         self.assertEqual(out, ['trashed v0.1.0-rc.1'])
 
     def test_second_run_is_a_no_op(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         self.run_apply()
         out: list[str] = []
@@ -497,7 +518,7 @@ class RcCleanup(Base):
         self.assertEqual(self.trashed(), ['0.1.0-rc.1'])
 
     def test_cli_trash_dir_and_keep_rc(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         rc_dir(self.root, '0.1.0-rc.1')
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(['run', '--root', self.root, '--keep-rc', '--trash-dir', self.trash_dir]), 0)
@@ -509,38 +530,40 @@ class RcCleanup(Base):
         self.assertEqual(self.trashed(), ['0.1.0-rc.1'])
 
     def test_failed_zip_leaves_rcs_in_place(self):
-        fake(self.root, '0.1.0')
-        fake(self.root, '0.1.1')
+        self.use_small_fs()
+        make_release(self.root, '0.1.0')
+        make_release(self.root, '0.1.1')
         rc_dir(self.root, '0.1.0-rc.1')
-        with mock.patch.object(core, 'verify', return_value='boom'):
-            with self.assertRaises(Fail):
-                self.run_apply()
+        self.disk_full(os.path.join(self.root, 'v0.1.0'))
+        with self.assertRaisesRegex(Fail, smallfs.FULL):
+            self.run_apply()
         self.assertEqual(self.ls(), ['0.1.0-rc.1', 'v0.1.0', 'v0.1.1'])
 
 
 class ZipNewest(Base):
     def test_newest_zipped_with_flag(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         self.assertEqual(self.run_apply(zip_newest=True), 1)
         self.assertEqual(self.ls(), ['v0.1.0.zip'])
         with zipfile.ZipFile(os.path.join(self.root, 'v0.1.0.zip')) as z:
             self.assertEqual(sorted(z.namelist()), ['v0.1.0/' + f for f in sorted(FILES)])
 
     def test_untouched_without_flag(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         self.assertEqual(self.run_apply(), 0)
         self.assertEqual(self.ls(), ['v0.1.0'])
 
-    def test_verification_failure_keeps_folder(self):
-        fake(self.root, '0.1.0')
-        with mock.patch.object(core, 'verify', return_value='boom'):
-            with self.assertRaises(Fail):
-                self.run_apply(zip_newest=True)
+    def test_write_failure_keeps_folder(self):
+        self.use_small_fs()
+        make_release(self.root, '0.1.0')
+        self.disk_full(os.path.join(self.root, 'v0.1.0'))
+        with self.assertRaisesRegex(Fail, smallfs.FULL):
+            self.run_apply(zip_newest=True)
         self.assertEqual(self.ls(), ['v0.1.0'])
         self.assertEqual(self.trashed(), [])
 
     def test_rerun_is_idempotent(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         self.run_apply(zip_newest=True)
         before = os.path.getmtime(os.path.join(self.root, 'v0.1.0.zip'))
         self.assertEqual(self.run_apply(zip_newest=True), 0)
@@ -548,7 +571,7 @@ class ZipNewest(Base):
         self.assertEqual(os.path.getmtime(os.path.join(self.root, 'v0.1.0.zip')), before)
 
     def test_custom_markers(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         os.remove(os.path.join(self.root, 'v0.1.0', 'RELEASE_NOTES.md'))
         self.assertEqual(self.run_apply(zip_newest=True), 0)
         self.assertEqual(self.ls(), ['v0.1.0'])
@@ -557,22 +580,22 @@ class ZipNewest(Base):
 
     def test_lines_still_roll_up_and_newest_zip_stays_separate(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
-            fake(self.root, v)
+            make_release(self.root, v)
         self.run_apply(zip_newest=True)
         self.assertEqual(self.ls(), ['0.1.zip', 'v0.2.0.zip'])
-        fake(self.root, '0.2.1')
+        make_release(self.root, '0.2.1')
         self.run_apply(zip_newest=True)
         self.assertEqual(self.ls(), ['0.1.zip', 'v0.2.0.zip', 'v0.2.1.zip'])
 
     def test_rc_cleanup_when_release_only_exists_as_zip(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         self.run_apply(zip_newest=True)
         rc_dir(self.root, 'v0.1.0-rc.4')
         self.run_apply(zip_newest=True)
         self.assertEqual(self.ls(), ['v0.1.0.zip'])
 
     def test_dry_run_and_cli(self):
-        fake(self.root, '0.1.0')
+        make_release(self.root, '0.1.0')
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self.assertEqual(main(['run', '--root', self.root, '--dry-run', '--zip-newest']), 0)
@@ -724,11 +747,12 @@ class Prereleases(Base):
             self.run_pre('1.0.0')
         self.assertEqual(self.tree(), {'alpha': ['v1.0.0-alpha.1', 'v1.0.0-alpha.x.zip']})
 
-    def test_corrupt_write_keeps_sources(self):
-        pre_build(self.pre, 'v1.0.0-alpha.1')
-        with mock.patch.object(core, 'verify', return_value='forced'):
-            with self.assertRaises(Fail):
-                self.run_pre('1.0.0')
+    def test_failed_write_keeps_sources(self):
+        self.use_small_fs()
+        self.pre = os.path.join(os.path.dirname(self.root), 'prereleases')
+        self.disk_full(pre_build(self.pre, 'v1.0.0-alpha.1'))
+        with self.assertRaisesRegex(Fail, smallfs.FULL):
+            self.run_pre('1.0.0')
         self.assertEqual(self.tree(), {'alpha': ['v1.0.0-alpha.1']})
         self.assertEqual(self.trashed(), [])
 

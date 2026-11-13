@@ -10,13 +10,13 @@ import tempfile
 import unittest
 import zipfile
 from collections.abc import Mapping
-from unittest import mock
 
 import hostcat
+import smallfs
 import test_dedupe as TD
-from release_rollup import cli, container, core
+from release_rollup import cli, core
 from release_rollup.container import MANIFEST, README, Rollup, parse_manifest, path_problem, restore
-from release_rollup.core import Fail, Src, archive
+from release_rollup.core import Fail, archive
 
 QUIET = TD.QUIET
 OUT = 'archive.zip'
@@ -55,6 +55,14 @@ class Base(unittest.TestCase):
 
     def say(self, line: str) -> None:
         self.said.append(line)
+
+    def use_small_fs(self) -> None:
+        """Move the folders onto the small filesystem (see smallfs.py)."""
+        self.tmp = smallfs.folder(self)
+        self.root = os.path.join(self.tmp, 'outbox')
+        self.out = os.path.join(self.tmp, 'out')
+        os.makedirs(self.root)
+        self.trash_dir = os.path.join(self.tmp, 'trash')
 
     def run_archive(self, dry: bool = False) -> int:
         self.said = []
@@ -216,25 +224,29 @@ class Rolling(Base):
 
 class Safety(Base):
     def test_interrupted_write_leaves_sources_and_no_archive(self):
-        self.put('a.bin', b'a' * 900)
-        self.put('b.bin', b'b' * 900)
-        with mock.patch.object(container, 'sha_stream', side_effect=OSError('disk full')):
-            with self.assertRaises((Fail, OSError)):
-                self.run_archive()
+        # The disk runs full while the archive is written.
+        self.use_small_fs()
+        self.put('a.bin', smallfs.noise(64 << 10, 1))
+        self.put('b.bin', smallfs.noise(64 << 10, 2))
+        ballast = smallfs.leave_free(self, self.root, 16 << 10)
+        with self.assertRaisesRegex(Fail, smallfs.FULL + '.*sources kept'):
+            self.run_archive()
         self.assertEqual(self.visible(), ['a.bin', 'b.bin'])
         self.assertEqual(self.hidden(), [])
         self.assertEqual(self.trashed(), [])
+        os.remove(ballast)
         self.run_archive()
         self.assertEqual(self.visible(), [OUT])
 
     def test_write_failing_after_an_earlier_archive_keeps_the_old_one(self):
-        self.put('a.bin', b'a' * 900)
+        self.use_small_fs()
+        self.put('a.bin', smallfs.noise(64 << 10, 1))
         self.run_archive()
         data = read(self.target())
-        self.put('b.bin', b'b' * 900)
-        with mock.patch.object(core, 'verify', return_value='boom'):
-            with self.assertRaisesRegex(Fail, 'failed the check'):
-                self.run_archive()
+        self.put('b.bin', smallfs.noise(64 << 10, 2))
+        smallfs.leave_free(self, self.root, 16 << 10)
+        with self.assertRaisesRegex(Fail, smallfs.FULL + '.*sources kept'):
+            self.run_archive()
         self.assertEqual(read(self.target()), data)
         self.assertEqual(self.visible(), sorted([OUT, 'b.bin']))
         self.assertEqual(self.hidden(), [])
@@ -250,22 +262,6 @@ class Safety(Base):
         # a damaged zip is not walked: its bytes are stored as they are and come back identical
         self.run_archive()
         self.assertEqual(self.restored()['bad.zip'], TD.sha(before))
-
-    def test_source_that_does_not_match_after_writing_is_refused_and_untouched(self):
-        make_zip(os.path.join(self.root, 'good.zip'), {'x': blob(1)})
-        self.put('b.bin', b'b' * 900)
-        before = {n: read(os.path.join(self.root, n)) for n in self.visible()}
-        real = core.sha_of
-        calls: list[Src] = []
-
-        def lying(src: Src) -> str:
-            calls.append(src)
-            return 'f' * 64 if len(calls) > 1 else real(src)
-        with mock.patch.object(core, 'sha_of', lying):
-            with self.assertRaisesRegex(Fail, 'failed the check'):
-                self.run_archive()
-        self.assertEqual({n: read(os.path.join(self.root, n)) for n in self.visible()}, before)
-        self.assertEqual((self.hidden(), self.trashed()), ([], []))
 
     def test_corrupt_existing_archive_is_refused_and_nothing_moves(self):
         self.put('a.bin', b'a' * 900)

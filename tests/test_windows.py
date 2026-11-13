@@ -7,10 +7,11 @@ The same tests run on Linux and check the warning there. hosts.tsv lists the few
 import contextlib
 import io
 import os
+import subprocess
+import sys
 import unittest
 import zipfile
 from collections.abc import Callable, Mapping
-from unittest import mock
 
 import hostcat
 import test_dedupe as TD
@@ -268,32 +269,66 @@ class Command(TD.Base):
         self.assertIn('warning: 1 name Windows cannot hold', out)
         self.assertFalse(os.path.exists(os.path.join(self.root, 'v0.1.2')))
 
+    def assertOneLine(self, err: str, start: str) -> None:
+        self.assertTrue(err.startswith(start), err)
+        self.assertEqual(err.count('\n'), 1, err)
+        self.assertNotIn('Traceback', err)
+        self.assertNotIn('Errno', err)
+
     def test_unexpected_file_errors_are_one_clean_line(self):
+        # --trash-dir names a file, so the first move into the trash fails with an OSError that nothing
+        # below the command line turns into a refusal. The command prints one line. The new zip was
+        # written and checked before that move, so it stays, and so does everything it holds.
+        in_the_way = os.path.join(self.tmp, 'trash-is-a-file')
+        with open(in_the_way, 'w') as f:
+            f.write('x')
+        # (upgrade and pre turn the same failure into their own refusal; their one-line OSErrors are
+        # in test_linux_unreadable_folders_are_one_clean_line.)
         self.releases()
-        cases = [FileNotFoundError(2, 'No such file or directory', 'C:\\r\\v0.1.0\\bad.'),
-                 PermissionError(13, 'Permission denied', 'C:\\r\\NUL'),
-                 ValueError('embedded null byte')]
-        for exc in cases:
-            for cmd in ('run', 'pre', 'upgrade'):
-                with self.subTest(cmd, exc=repr(exc)):
-                    fn = {'run': 'apply', 'pre': 'apply_pre', 'upgrade': 'upgrade'}[cmd]
-                    with mock.patch.object(cli, fn, side_effect=exc):
-                        code, _, err = self.run_cli(cmd, '--root', self.root)
-                    self.assertEqual(code, 1)
-                    self.assertTrue(err.startswith('error: '), err)
-                    self.assertEqual(err.count('\n'), 1)
-                    self.assertNotIn('Traceback', err)
-                    self.assertNotIn('Errno', err)
+        before = tree_state(self.root)
+        code, _, err = self.run_cli('run', '--root', self.root, '--trash-dir', in_the_way)
+        self.assertEqual(code, 1)
+        self.assertOneLine(err, 'error: %s: ' % in_the_way)
+        after = tree_state(self.root)
+        self.assertEqual({k: v for k, v in after.items() if k in before}, before)
+        with Rollup(os.path.join(self.root, '0.1.zip')) as r:
+            self.assertEqual(r.check(), '')
+            self.assertEqual({f.split('/')[0] for f in r.files()}, {'v0.1.0', 'v0.1.1', 'v0.1.2'})
         code, _, err = self.run_cli('run', '--root', self.root, '--trash-dir', os.path.join(self.tmp, 't'))  # the same folder still works
         self.assertEqual(code, 0)
 
-    def test_restore_errors_are_clean_too(self):
+    def test_linux_unreadable_folders_are_one_clean_line(self):
+        # A folder this user may not list: the releases folder for run and upgrade, a stage folder for pre.
+        self.releases()
+        pre = os.path.join(self.tmp, 'pre')
+        os.makedirs(os.path.join(pre, 'alpha'))
+        trash = os.path.join(self.tmp, 't')
+        for cmd, root, locked in (('run', self.root, self.root), ('upgrade', self.root, self.root),
+                                  ('pre', pre, os.path.join(pre, 'alpha'))):
+            with self.subTest(cmd):
+                os.chmod(locked, 0o300)
+                try:
+                    code, _, err = self.run_cli(cmd, '--root', root, '--trash-dir', trash)
+                finally:
+                    os.chmod(locked, 0o755)
+                self.assertEqual(code, 1)
+                self.assertOneLine(err, 'error: %s: Permission denied' % locked)
+
+    def test_linux_restore_output_failing_is_one_clean_line(self):
+        # restore prints its summary after the files are written, past the part that turns OSErrors
+        # into a refusal. With stdout unbuffered on a full device that print fails with ENOSPC.
         z = self.rollup()
-        with mock.patch.object(cli, 'restore', side_effect=FileNotFoundError(2, 'No such file or directory', 'out\\NUL.')):
-            code, _, err = self.run_cli('restore', z, '--out', self.out)
-        self.assertEqual(code, 1)
-        self.assertIn('NUL.: No such file or directory', err)
-        self.assertEqual(err.count('\n'), 1)
+        with open('/dev/full', 'w') as full:
+            r = subprocess.run([sys.executable, '-u', '-m', 'release_rollup', 'restore', z, '--out', self.out],
+                               stdout=full, stderr=subprocess.PIPE, text=True, env=dict(os.environ, PYTHONPATH=TD.SRC))
+        self.assertEqual(r.returncode, 1)
+        self.assertOneLine(r.stderr, 'error: a file: No space left on device')
+        self.assertEqual(sorted(os.listdir(self.out)), ['v0.1.0', 'v0.1.1', 'v0.1.2'])
+
+    def test_no_command_prints_the_usage(self):
+        code, out, err = self.run_cli()
+        self.assertEqual((code, out), (2, ''))
+        self.assertTrue(err.startswith('usage: release-rollup'), err)
 
 
 load_tests = hostcat.load_tests

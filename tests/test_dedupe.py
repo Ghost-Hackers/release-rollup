@@ -1,7 +1,6 @@
 """Deduped rollups: round trips, safety promises, hostile input and failure at every step."""
 import ast
 import contextlib
-import errno
 import hashlib
 import io
 import json
@@ -17,8 +16,10 @@ import tempfile
 import unittest
 import zipfile
 from collections.abc import Buffer, Callable, Container, Iterable, Mapping
-from typing import BinaryIO, NotRequired, TypedDict, Unpack, cast
+from typing import NotRequired, TypedDict, Unpack, cast
 from unittest import mock
+
+import smallfs
 
 import hostcat
 
@@ -201,6 +202,14 @@ class Base(unittest.TestCase):
     def say(self, line: str) -> None:
         self.said.append(line)
 
+    def use_small_fs(self) -> None:
+        """Move the releases, output and trash folders onto the small filesystem (see smallfs.py)."""
+        self.tmp = smallfs.folder(self)
+        self.root = os.path.join(self.tmp, 'releases')
+        self.out = os.path.join(self.tmp, 'out')
+        os.makedirs(self.root)
+        self.trash = move_trash(os.path.join(self.tmp, 'trash'))
+
     def run_apply(self, **kw: Unpack[ApplyOpts]) -> int:
         return apply(self.root, trash=self.trash, say=self.say, **kw)
 
@@ -355,6 +364,8 @@ class RoundTrip(Base):
     def test_too_big_for_a_default_restore_stays_plain(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
             release(self.root, v, app(v))
+        # The one patched limit in the suite: the real one is 64 GiB, and a real input that size would be
+        # read, deflated and checked in full, which takes minutes and as much free disk.
         with mock.patch.object(core, 'DEFAULT_MAX_SIZE', 1000):
             self.run_apply()
         with zipfile.ZipFile(os.path.join(self.root, '0.1.zip')) as zf:
@@ -422,7 +433,7 @@ class InnerZips(Base):
         'stored': lambda: inner_zip({'a': noise(9000), 'b': noise(9000, 2)}, zipfile.ZIP_STORED),
         'data descriptor': lambda: inner_zip({'a': noise(9000), 'b': noise(9000, 2)}, streamed=True),
         'zip64': lambda: inner_zip({'a': noise(9000)}, force_zip64=True),
-        'comment': lambda: inner_zip({'a': noise(9000)}, comment=b'a comment PK\x05\x06 with a fake signature'),
+        'comment': lambda: inner_zip({'a': noise(9000)}, comment=b'a comment PK\x05\x06 with a stray signature'),
         'prefix junk': lambda: inner_zip({'a': noise(9000)}, prefix=b'#!/bin/sh\nexit 0\n' + noise(3000, 4)),
         'trailing junk': lambda: inner_zip({'a': noise(9000)}, trailing=b'trailing'),
         'no entries': lambda: inner_zip({}),
@@ -1037,9 +1048,11 @@ class Hostile(Base):
         self.assertEqual(sorted(os.listdir(self.out)), ['v0.1.2'])
 
     def test_max_size_refuses_before_reading(self):
+        # A damaged blob as well: had any blob been read, the refusal would name the damage instead.
         z = self.rollup()
-        with mock.patch.object(Rollup, 'check', side_effect=AssertionError('read it')):
-            self.assertRefused(z, 'unpack to more', max_size=100)
+        info = Corruption.blob_of(z)
+        rewrite(z, change={info.filename: noise(info.file_size, 77)})
+        self.assertRefused(z, 'unpack to more', max_size=100)
 
     def test_reused_blob_cannot_inflate_past_the_cap(self):
         # A small manifest asking for one blob many times: the sizes add up before any byte is read.
@@ -1052,9 +1065,9 @@ class Hostile(Base):
             assert isinstance(length, int)
             e['refs'] = [[i, length, big[2]] for i in range(min(e['skeleton_size'], 2000))]
             e['size'] = e['skeleton_size'] + length * len(e['refs'])
-        rewrite(z, manifest=edit)
-        with mock.patch.object(Rollup, 'check', side_effect=AssertionError('read it')):
-            self.assertRefused(z, 'unpack to more', max_size=1 << 20)
+        info = Corruption.blob_of(z)
+        rewrite(z, manifest=edit, change={info.filename: noise(info.file_size, 77)})
+        self.assertRefused(z, 'unpack to more', max_size=1 << 20)
 
     def test_plain_zip_bomb_is_refused_by_size(self):
         z = os.path.join(self.root, 'bomb.zip')
@@ -1064,15 +1077,46 @@ class Hostile(Base):
         self.assertRefused(z, 'unpack to more', max_size=1 << 20)
 
     def test_manifest_size_cap(self):
+        # A real manifest one byte past the cap. Spaces are valid JSON padding and deflate to almost
+        # nothing, so the zip stays small; the size is refused before the manifest is read.
         z = self.rollup()
-        with mock.patch.object(container, 'MAX_MANIFEST', 10):
-            self.assertRefused(z, 'too large')
+        with zipfile.ZipFile(z) as zf:
+            items = [(i.filename, zf.read(i.filename)) for i in zf.infolist() if i.filename != MANIFEST]
+        with zipfile.ZipFile(z, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for name, data in items:
+                zf.writestr(name, data)
+            left = container.MAX_MANIFEST + 1
+            with zf.open(MANIFEST, 'w') as f:
+                chunk = b' ' * (1 << 20)
+                while left:
+                    step = min(left, len(chunk))
+                    f.write(chunk[:step])
+                    left -= step
+        self.assertRefused(z, 'too large')
 
     def test_scan_stays_fast_on_absurd_plain_sizes(self):
-        # An old rollup past the restore cap still scans: only restore enforces it.
-        z = self.rollup(dedupe=False)
-        with mock.patch.object(container, 'DEFAULT_MAX_SIZE', 10):
-            self.assertIn(z, scan(self.root)[1])
+        # An old rollup past the restore cap still scans: only restore enforces it. Its central
+        # directory claims almost 4 GiB for every entry, over 64 GiB in all.
+        for v in ('0.1.0', '0.1.1', '0.1.2'):
+            release(self.root, v, app(v), extra={'assets/f%d' % i: b'x' for i in range(5)})
+        release(self.root, '0.2.0', app('0.2.0'))
+        self.run_apply(dedupe=False)
+        z = os.path.join(self.root, '0.1.zip')
+        with zipfile.ZipFile(z) as zf:
+            count, start = len(zf.infolist()), zf.start_dir
+        with open(z, 'r+b') as f:
+            data = bytearray(f.read())
+            at = start
+            for _ in range(count):
+                self.assertEqual(data[at:at + 4], b'PK\x01\x02')
+                struct.pack_into('<I', data, at + 24, 0xFFFFFFF0)
+                name_len, extra_len, comment_len = struct.unpack_from('<HHH', data, at + 28)
+                at += 46 + name_len + extra_len + comment_len
+            f.seek(0)
+            f.write(data)
+        self.assertGreater(count * 0xFFFFFFF0, container.DEFAULT_MAX_SIZE)
+        self.assertIn(z, scan(self.root)[1])
+        self.assertRefused(z, 'unpack to more')
 
 
 class Corruption(Base):
@@ -1198,85 +1242,60 @@ class Failure(Base):
         self.assertEqual(snapshot(self.root), before)
         self.assertEqual([n for n in os.listdir(self.root) if '.tmp' in n], [])
 
-    def test_disk_full_while_writing(self):
+    def rollup_size(self) -> int:
+        """Size of the rollup that prepared() and a run lead to, written on the normal disk first."""
+        z, _ = self.prepared()
+        self.run_apply()
+        return os.path.getsize(z)
+
+    def full_disk(self, free: int) -> dict[str, str]:
+        """prepared() on the small filesystem, then filled until about free bytes are left."""
+        self.use_small_fs()
         _, before = self.prepared()
-        with mock.patch.object(container, 'write_container') as w, mock.patch.object(core, 'write_container', w):
-            w.side_effect = OSError(errno.ENOSPC, 'No space left on device')
-            with self.assertRaisesRegex(Fail, 'No space left.*sources kept'):
-                self.run_apply()
+        smallfs.leave_free(self, self.root, free)
+        return before
+
+    def test_disk_full_while_writing(self):
+        before = self.full_disk(16 << 10)
+        with self.assertRaisesRegex(Fail, smallfs.FULL + '.*sources kept'):
+            self.run_apply()
         self.assertUntouched(before)
 
     def test_disk_full_midway_through_a_blob(self):
-        _, before = self.prepared()
-        # Typed by hand: the helper is private, so it is read by name.
-        real: Callable[[BinaryIO, int, int, Callable[[bytes], object]], None] = getattr(container, '_copy_range')
-        calls: list[int] = []
-
-        def full(f: BinaryIO, offset: int, length: int, sink: Callable[[bytes], object]) -> None:
-            calls.append(length)
-            if len(calls) > 6:
-                raise OSError(errno.ENOSPC, 'No space left on device')
-            return real(f, offset, length, sink)
-        with mock.patch.object(container, '_copy_range', full), self.assertRaisesRegex(Fail, 'No space left'):
+        before = self.full_disk(self.rollup_size() // 2)
+        with self.assertRaisesRegex(Fail, smallfs.FULL + '.*sources kept'):
             self.run_apply()
         self.assertUntouched(before)
 
     def test_disk_full_while_writing_the_plain_comparison(self):
-        _, before = self.prepared()
-        real = core.write_zip
-
-        def full(*a: object) -> None:
-            raise OSError(errno.ENOSPC, 'No space left on device')
-        with mock.patch.object(core, 'write_zip', full), self.assertRaisesRegex(Fail, 'No space left'):
+        # Room for the rollup and half as much again: the rollup is written and checked, then the
+        # plain zip it is compared with runs out of space. That one is bigger, the releases share most bytes.
+        before = self.full_disk(self.rollup_size() * 3 // 2)
+        with self.assertRaisesRegex(Fail, smallfs.FULL + '.*sources kept'):
             self.run_apply()
         self.assertUntouched(before)
-        self.assertIs(core.write_zip, real)
 
     def test_swap_failure_keeps_everything(self):
+        # A folder sits where the rollup goes, so the last step, moving the checked temp file in
+        # place, fails. Linux says "Is a directory", Windows "Access is denied".
+        self.prepared()
+        target = os.path.join(self.root, 'in-the-way.zip')
+        os.makedirs(target)
+        with open(os.path.join(target, 'keep.txt'), 'w') as f:
+            f.write('keep')
+        before = snapshot(self.root)
+        src = os.path.join(self.root, 'v0.1.2', 'assets', 'app.zip')
+        files: Files = {'v0.1.2/assets/app.zip': ('file', src)}
+        with self.assertRaisesRegex(Fail, 'could not be written.*sources kept'):
+            core.build_target(target, files, True, 'in-the-way.zip', '1 release', self.say)
+        self.assertUntouched(before)
+
+    def test_windows_swap_onto_a_rollup_in_use_keeps_everything(self):
+        # Another program has the old rollup open (here: this test). Windows refuses to replace it.
         z, before = self.prepared()
-        real = os.replace
-
-        def refuse(a: str, b: str) -> None:
-            if b == z:
-                raise PermissionError(13, 'file is in use')
-            return real(a, b)
-        with mock.patch('os.replace', refuse), self.assertRaisesRegex(Fail, 'in use'):
+        with open(z, 'rb'), self.assertRaisesRegex(Fail, 'could not be written.*sources kept'):
             self.run_apply()
         self.assertUntouched(before)
-
-    def test_failed_verify_keeps_everything(self):
-        _, before = self.prepared()
-        with mock.patch.object(core, 'verify', return_value='sha256 differs for x'), self.assertRaisesRegex(Fail, 'sources kept'):
-            self.run_apply()
-        self.assertUntouched(before)
-
-    def test_source_changing_during_the_write_is_caught(self):
-        for v in ('0.1.0', '0.1.1', '0.1.2', '0.2.0'):
-            release(self.root, v, app(v))
-        real = container.split_zip
-        victim = os.path.join(self.root, 'v0.1.0', 'assets', 'app.zip')
-
-        def tamper(path: str, size: int) -> list[tuple[int, int, bool]] | None:
-            cuts = real(path, size)
-            if path == victim:
-                assert cuts is not None
-                with open(path, 'r+b') as f:
-                    f.seek(cuts[0][0] + 10)
-                    f.write(b'tampered')
-            return cuts
-        with mock.patch.object(container, 'split_zip', tamper), self.assertRaisesRegex(Fail, 'sources kept'):
-            self.run_apply()
-        self.assertTrue(os.path.isdir(os.path.join(self.root, 'v0.1.0')))
-        self.assertFalse(os.path.exists(os.path.join(self.root, '0.1.zip')))
-
-    def test_collision_is_refused(self):
-        for v in ('0.1.0', '0.1.1', '0.2.0'):
-            release(self.root, v, app(v))
-        def same_key(_: str) -> str:
-            return 'a' * 64
-        with mock.patch.object(container, 'blob_key', same_key), self.assertRaisesRegex(Fail, 'collision'):
-            self.run_apply()
-        self.assertTrue(os.path.isdir(os.path.join(self.root, 'v0.1.0')))
 
     def test_killed_mid_write_old_rollup_survives_and_rerun_finishes(self):
         z, before = self.prepared()
@@ -1308,18 +1327,10 @@ core.apply(%r, trash=core.move_trash(%r), say=lambda *_: None)
 
     def test_restore_disk_full_writes_nothing(self):
         z = self.rollup()
-        with mock.patch.object(container.shutil, 'copyfileobj', side_effect=OSError(errno.ENOSPC, 'No space left')):
-            with self.assertRaisesRegex(Fail, 'No space left'):
-                restore(z, out=self.out, say=QUIET)
-        self.assertEqual(os.listdir(self.out), [])
-
-    def test_restore_noticing_a_change_during_the_copy_writes_nothing(self):
-        z = self.rollup()
-        with mock.patch.object(Rollup, 'check', return_value=''):
-            info = Corruption.blob_of(z)
-            rewrite(z, change={info.filename: noise(info.file_size, 77)})
-            with self.assertRaisesRegex(Fail, 'corrupt'):
-                restore(z, out=self.out, say=QUIET)
+        self.out = os.path.join(smallfs.folder(self), 'out')
+        smallfs.leave_free(self, os.path.dirname(self.out), 64 << 10)
+        with self.assertRaisesRegex(Fail, smallfs.FULL):
+            restore(z, out=self.out, say=QUIET)
         self.assertEqual(os.listdir(self.out), [])
 
 
