@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+
+- `run` and `pre` now say a deduplicated rollup from release-rollup 0.2 or later needs a newer release-rollup, instead of calling its `.rollup` folder an unexpected entry. They still refuse it and change nothing (#4).
+
 ## [0.1.0] - 2026-11-12
 
 ### Added
