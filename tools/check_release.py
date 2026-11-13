@@ -77,7 +77,9 @@ def check_versions(root: str, tag: str | None = None) -> list[str]:
 
 
 def _git(root: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(['git', '-C', root, *args], capture_output=True, text=True, encoding='utf-8')
+    # surrogateescape keeps a file name that isn't valid UTF-8 (possible on Linux) instead of failing on it.
+    return subprocess.run(['git', '-C', root, *args], capture_output=True, text=True, encoding='utf-8',
+                          errors='surrogateescape')
 
 
 def unreleased_entries(changelog: str) -> list[str]:
@@ -121,7 +123,9 @@ def check_changelog(root: str, base: str, head: str) -> list[str]:
     # A line that replaces an old one is a rewording, so it only counts when it adds to the total.
     if len(added) > gone:
         return []
-    shown = ', '.join(changed[:3]) + (f' and {len(changed) - 3} more' if len(changed) > 3 else '')
+    # Bytes that aren't UTF-8 show as \xff and the like, so printing the message can't fail.
+    names = [p.encode('utf-8', 'surrogateescape').decode('utf-8', 'backslashreplace') for p in changed[:3]]
+    shown = ', '.join(names) + (f' and {len(changed) - 3} more' if len(changed) > 3 else '')
     return [f'{shown} changed under src/, but "## [Unreleased]" in CHANGELOG.md has no new entry. '
             'Add one, or put the "no changelog" label on the pull request if users won\'t notice the change.']
 
