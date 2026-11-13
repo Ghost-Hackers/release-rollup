@@ -60,8 +60,18 @@ def sha_stream(f):
 
 
 def folder_files(path):
+    """arcname -> path for every file under path. Raises Fail for a subfolder that can't be read or a
+    link to another folder (a symlink, or a junction on Windows): os.walk passes over both quietly,
+    and their files would be missing from the rollup while the folder still went to the trash."""
+    def refuse(e):
+        raise Fail('cannot read %s (%s); nothing was changed' % (e.filename or path, e.strerror or type(e).__name__))
+
     out = {}
-    for d, _, fs in os.walk(path):
+    for d, dirs, fs in os.walk(path, onerror=refuse):
+        for sub in dirs:
+            p = os.path.join(d, sub)
+            if os.path.islink(p) or os.path.isjunction(p):
+                raise Fail('%s links to another folder, which a rollup can\'t hold; nothing was changed' % p)
         for f in fs:
             p = os.path.join(d, f)
             out[os.path.relpath(p, path).replace(os.sep, '/')] = p
@@ -304,11 +314,13 @@ def apply(root, dry=False, trash=None, say=print, markers=DEFAULT_MARKERS, keep_
     if not steps and not (published and rc_leftovers(root, published)):
         say('nothing to do')
         return 0
+    # Every step's files are listed before anything is written, so a folder that can't be
+    # listed stops the run with nothing changed.
+    all_files = [member_files(s) for s in steps]
     if trash is None and not dry:
         trash = make_trash()
-    for s in steps:
+    for s, files in zip(steps, all_files):
         name = os.path.basename(s['target'])
-        files = member_files(s)
         what = '%s release%s, %s files' % (n(len(s['members'])), '' if len(s['members']) == 1 else 's', n(len(files)))
         if dry:
             say('would %s %s (%s); trash %s' % ('check' if s['built'] else 'write', name, what,
@@ -454,12 +466,12 @@ def apply_pre(root, current=None, dry=False, trash=None, say=print, markers=PRE_
     if not steps:
         say('nothing to do')
         return 0
+    all_files = [member_files_pre(s) for s in steps]
     if trash is None and not dry:
         trash = make_trash()
-    for s in steps:
+    for s, files in zip(steps, all_files):
         rel = os.path.relpath(s['target'], root).replace(os.sep, '/')
         d = os.path.dirname(s['target'])
-        files = member_files_pre(s)
         what = '%s build%s, %s files' % (n(len(s['members'])), '' if len(s['members']) == 1 else 's', n(len(files)))
         if dry:
             say('would %s %s (%s); trash %s' % ('check' if s['built'] else 'write', rel, what,

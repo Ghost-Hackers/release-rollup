@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- `run` and `pre` left out a subfolder they couldn't read, or a link to another folder, and still trashed the release. Both now stop the run before anything changes and name the path (#33).
+
 ## [0.1.0] - 2026-11-12
 
 ### Added

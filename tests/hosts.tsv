@@ -1,3 +1,10 @@
 # Tests that run on one host only: <test id><TAB><linux|windows>. Every other test runs on both hosts
 # and checks the behavior of the host it runs on. test_hosts.py checks this file.
 test_build_release.Build.test_linux_a_dangling_symlink_in_place_of_an_output_is_refused	linux
+test_walk.Walk.test_linux_run_stops_on_a_subfolder_it_cant_read	linux
+test_walk.Walk.test_linux_run_dry_run_stops_on_a_subfolder_it_cant_read	linux
+test_walk.Walk.test_linux_pre_stops_on_a_subfolder_it_cant_read	linux
+test_walk.Walk.test_linux_run_stops_on_a_symlink_to_a_folder	linux
+test_walk.Walk.test_windows_run_stops_on_a_junction	windows
+test_walk.Walk.test_linux_run_stops_before_writing_an_earlier_group	linux
+test_walk.Walk.test_linux_pre_stops_before_writing_an_earlier_stage	linux
