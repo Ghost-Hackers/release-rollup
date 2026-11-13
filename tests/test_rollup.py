@@ -7,6 +7,8 @@ import unittest
 import zipfile
 from unittest import mock
 
+import hostcat
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 
 from release_rollup import core  # noqa: E402
@@ -739,3 +741,6 @@ class Prereleases(Base):
         self.assertEqual(self.tree(), {'alpha': ['v1.0.0-alpha.2', 'v1.0.0-alpha.x.zip']})
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertNotEqual(main(['pre', '--root', self.pre, '--current', 'nope']), 0)
+
+
+load_tests = hostcat.load_tests
