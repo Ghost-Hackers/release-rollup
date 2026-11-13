@@ -359,6 +359,9 @@ verdict(){ # name rootdir snapshot origdir rc
   elif recover "$2" "$4" "$1" >/dev/null; then ok "(b) old version $1: folder changed but every original file is still recoverable (exit $5)"; info "$1: old version changed the folder, data recoverable"
   else no "(b) old version $1: DATA LOST or corrupted (exit $5)"; fi; }
 cp -a Rq Rq1; BO run --root Rq --trash-dir tr >/dev/null 2>"$W/e1"; rc=$?; info "old run on a rollup from this version: exit $rc, $(head -c 160 "$W/e1" | head -1)"; verdict "run rerun on deduped line zip" Rq Rq1 Rq0 $rc
+# 0.1.1 and later name the upgrade when they refuse a deduplicated rollup (#4); 0.1.0 predates the message.
+if [ "$OVER" = 0.1.0 ]; then info "old version 0.1.0 has no upgrade message to check"
+else chk "(b) old version $OVER says to upgrade when it refuses a deduped rollup" "grep -q 'upgrade release-rollup' '$W/e1'"; fi
 cp -a Rq Rq1; rm -rf Rl; cp -a Rq Rl; mkrel Rl/v0.1.3 late; cp -a Rl Rl1; cp -a Rq0 Rl0; mkrel Rl0/v0.1.3 late
 BO run --root Rl --trash-dir tr >/dev/null 2>"$W/e2"; rc=$?; info "old run with a late release over a deduped 0.1.zip: exit $rc, $(head -c 160 "$W/e2" | head -1)"; verdict "run with late release into deduped line zip" Rl Rl1 Rl0 $rc
 cp -a Pq Pq1; BO pre --root Pq --current 0.0.2-beta.1 --trash-dir tr >/dev/null 2>"$W/e3"; rc=$?; info "old pre on stage zips from this version: exit $rc, $(head -c 160 "$W/e3" | head -1)"; verdict "pre rerun on deduped stage zips" Pq Pq1 Pq0 $rc
