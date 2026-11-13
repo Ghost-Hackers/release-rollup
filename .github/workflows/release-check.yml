@@ -1,0 +1,64 @@
+name: Release check
+
+on:
+  # The pull request job always runs so it can be a required check. It passes by itself
+  # when the pull request carries the "no changelog" label, so label changes rerun it.
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Changelog entry
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the pull request with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Check the changelog entry
+        # A change under src/ needs a new line under "## [Unreleased]" unless the
+        # pull request has the "no changelog" label.
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'no changelog') }}
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: python tools/check_release.py changelog --base "origin/$BASE_REF" --head HEAD
+
+      - name: Skip the changelog entry
+        if: ${{ contains(github.event.pull_request.labels.*.name, 'no changelog') }}
+        run: echo 'The pull request has the "no changelog" label, so no entry is needed.'
+
+      - name: Check the version numbers
+        run: python tools/check_release.py versions
+
+  tag:
+    name: Release versions
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Check the version numbers against the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python tools/check_release.py versions --tag "$TAG"

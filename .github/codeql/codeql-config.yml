@@ -1,0 +1,9 @@
+name: release-rollup CodeQL config
+
+queries:
+  - uses: security-and-quality
+
+# The tests build temporary trees, damaged zips and odd paths on purpose, so path and
+# file queries would flag them. The code that ships is all under src/.
+paths-ignore:
+  - tests
