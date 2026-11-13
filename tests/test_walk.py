@@ -65,6 +65,9 @@ class Walk(unittest.TestCase):
     def lock(self, path: str) -> None:
         os.chmod(path, 0)
         self.addCleanup(os.chmod, path, stat.S_IRWXU)
+        if os.access(path, os.R_OK):
+            # Root reads past file modes, so the run would go ahead and trash the test folder.
+            self.fail('%s is still readable after chmod 0: run the tests as a normal user, not root' % path)
 
     def check_unchanged(self, args: list[str], expect: str, locked: str) -> None:
         os.chmod(locked, stat.S_IRWXU)
