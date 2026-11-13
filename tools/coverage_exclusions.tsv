@@ -29,3 +29,7 @@ src/release_rollup/core.py	782	linux	except OSError:	A normal user can't mount a
 src/release_rollup/core.py	783	linux	shutil.copy2(path, old)	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.
 src/release_rollup/core.py	938	linux	except OSError:	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.
 src/release_rollup/core.py	939	linux	shutil.copy2(target, keep_old)	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.
+src/release_rollup/container.py	176	windows	return path	os.name is 'nt' on Windows, so long_path() goes on past this check.
+src/release_rollup/container.py	523	windows	raise Fail('a source file got shorter while it was being read; sources kept')	A file that reads shorter than its size while nothing changes it is a Linux sysfs file; on Windows the source has to shrink during the run.
+src/release_rollup/core.py	235->239	windows	if windows:	host_is_windows() is True on Windows, so this check always raises.
+src/release_rollup/core.py	241	windows	return len(bad)	host_is_windows() is True on Windows, so one of the two raises above runs first.

@@ -74,29 +74,56 @@ class NoTrashCommand(TR.Base):
 
 
 class GioTrash(TR.Base):
-    """gio_trash runs the real command; these put a shell script named gio first on PATH."""
+    """gio_trash runs the real command; these put a Python program named gio first on PATH."""
 
-    def gio(self, body: str) -> None:
+    def gio(self, code: str) -> None:
+        """A gio that runs code, with the path to trash as its last argument."""
         folder = os.path.join(self._td.name, 'bin')
         os.makedirs(folder)
-        stub = os.path.join(folder, 'gio')
-        with open(stub, 'w') as f:
-            f.write('#!/bin/sh\n' + body)
-        os.chmod(stub, 0o755)
-        self.only_on_path(folder + os.pathsep + '/bin' + os.pathsep + '/usr/bin')
+        if sys.platform == 'win32':
+            # Windows won't run a script as gio, so gio.exe is a renamed copy of python.exe and its DLLs.
+            # It runs ./trash.
+            for name in os.listdir(sys.base_prefix):
+                if name.lower().endswith('.dll'):
+                    shutil.copy2(os.path.join(sys.base_prefix, name), folder)
+            shutil.copy2(os.path.join(sys.base_prefix, 'python.exe'), os.path.join(folder, 'gio.exe'))
+            here = os.path.join(self._td.name, 'gio-cwd')
+            os.makedirs(here)
+            with open(os.path.join(here, 'trash'), 'w') as f:
+                f.write(code)
+            self.set_env('PYTHONHOME', sys.base_prefix)
+            self.addCleanup(os.chdir, os.getcwd())
+            os.chdir(here)
+        else:
+            stub = os.path.join(folder, 'gio')
+            with open(stub, 'w') as f:
+                f.write('#!%s\n%s' % (sys.executable, code))
+            os.chmod(stub, 0o755)
+        self.only_on_path(folder)
 
-    def test_linux_gio_trash_moves_the_file(self):
+    def set_env(self, name: str, value: str) -> None:
+        old = os.environ.get(name)
+        os.environ[name] = value
+
+        def back() -> None:
+            if old is None:
+                del os.environ[name]
+            else:
+                os.environ[name] = old
+        self.addCleanup(back)
+
+    def test_gio_trash_moves_the_file(self):
         gone = os.path.join(self._td.name, 'gone')
         os.makedirs(gone)
-        self.gio('mv "$2" "%s/"\n' % gone)
+        self.gio('import shutil, sys\nshutil.move(sys.argv[-1], %r)\n' % gone)
         p = os.path.join(self.root, 'x')
         TA.write(p, b'x')
         core.gio_trash(p)
         self.assertEqual(os.listdir(gone), ['x'])
         self.assertFalse(os.path.exists(p))
 
-    def test_linux_gio_trash_failing_is_a_clean_error(self):
-        self.gio('echo "no trash here" >&2\nexit 2\n')
+    def test_gio_trash_failing_is_a_clean_error(self):
+        self.gio("import sys\nsys.exit('no trash here')\n")
         p = os.path.join(self.root, 'x')
         TA.write(p, b'x')
         with self.assertRaisesRegex(Fail, 'gio trash .* failed: no trash here'):
@@ -134,11 +161,23 @@ class Upgrade(unittest.TestCase):
 
 
 class Oversized(TA.Base):
-    def test_linux_archive_over_the_size_limit_is_refused_unread(self):
+    def test_archive_over_the_size_limit_is_refused_unread(self):
         # Sparse, so it takes no disk space.
         big = os.path.join(self.root, 'big.bin')
         with open(big, 'wb') as f:
-            f.truncate(core.DEFAULT_MAX_SIZE + 1)
+            if sys.platform == 'win32':
+                # NTFS needs the sparse flag before the size is set.
+                import ctypes
+                import msvcrt
+                from ctypes import wintypes
+                kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+                done = wintypes.DWORD()
+                if not kernel32.DeviceIoControl(wintypes.HANDLE(msvcrt.get_osfhandle(f.fileno())), 0x900C4,
+                                                None, 0, None, 0, ctypes.byref(done), None):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            # truncate() fills with zeros on Windows; a write past the end leaves a sparse gap.
+            f.seek(core.DEFAULT_MAX_SIZE)
+            f.write(b'\0')
         with self.assertRaisesRegex(Fail, 'would hold more than .* bytes; sources kept'):
             self.run_archive()
         self.assertEqual(os.listdir(self.root), ['big.bin'])

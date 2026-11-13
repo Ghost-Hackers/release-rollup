@@ -302,6 +302,16 @@ class Safety(Base):
                     archive(d, OUT, trash=core.move_trash(self.trash_dir), say=QUIET)
                 self.assertEqual(sorted(os.listdir(d)), sorted(['ok.bin', bad]))
 
+    def test_refuses_a_name_that_is_not_unicode_on_disk(self):
+        # '\udc80' is the byte 0x80 in a Linux name and a lone UTF-16 surrogate in a Windows name.
+        # Both disks hold it, a manifest can't.
+        bad = 'report\udc80.zip'
+        write(os.path.join(self.root, 'ok.bin'), b'1' * 900)
+        write(os.path.join(self.root, bad), b'2')
+        with self.assertRaisesRegex(Fail, 'cannot archive'):
+            self.run_archive()
+        self.assertEqual(sorted(os.listdir(self.root)), sorted(['ok.bin', bad]))
+
     def archive_holding(self, name: str, data: bytes = b'q' * 900) -> bytes:
         """An archive in self.root whose manifest names a file `name`, as an archive made elsewhere could."""
         self.put('x.bin', data)

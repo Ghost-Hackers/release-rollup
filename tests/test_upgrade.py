@@ -285,7 +285,7 @@ core.upgrade(%r, trash=core.move_trash(%r), say=lambda *_: None)
         self.assertEqual(TD.sha_file(left), keep)
         self.assertTrue(any(s.startswith('left .0.1.zip.upgrade-old alone: ') for s in self.said), self.said)
 
-    def test_linux_name_a_rollup_cannot_hold_is_refused_and_untouched(self):
+    def test_name_a_rollup_cannot_hold_is_refused_and_untouched(self):
         z = os.path.join(self.root, '0.1.zip')
         with zipfile.ZipFile(z, 'w') as w:
             w.writestr('v0.1.0/a\x01b.bin', TD.noise(4000))

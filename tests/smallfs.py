@@ -7,11 +7,13 @@ see .github/workflows/ci.yml. Without it these tests fail and say how to set it 
 RR_NOLINKS_FS names a folder on a filesystem without hard links, for the Windows tests of the
 copy that stands in for a link. CI makes one on a FAT32 VHD.
 """
+import errno
 import os
 import random
 import shutil
 import tempfile
 import unittest
+from io import FileIO
 
 ENV = 'RR_SMALLFS'
 LIMIT = 64 << 20
@@ -82,6 +84,18 @@ def leave_free(case: unittest.TestCase, near: str, free: int) -> str:
             f.write(chunk[:step])
             left -= step
     return path
+
+
+def fill(f: FileIO) -> None:
+    """Fill the disk under the unbuffered file f to the last byte."""
+    for size in (1 << 20, 1 << 16, 1 << 12, 1 << 9, 1 << 6, 1 << 3, 1):
+        block = b'\0' * size
+        try:
+            while True:
+                f.write(block)
+        except OSError as e:
+            if e.errno != errno.ENOSPC:
+                raise
 
 
 def _remove(path: str) -> None:
