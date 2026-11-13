@@ -1463,6 +1463,19 @@ class Paths(Base):
 
 
 class Version(unittest.TestCase):
+    def test_without_its_version_file_the_package_reports_the_same_version(self):
+        # pyproject.toml maps the copy's folder onto src/release_rollup for coverage.
+        with open(os.path.join(SRC, 'release_rollup', 'VERSION')) as f:
+            ver = f.read().strip()
+        with tempfile.TemporaryDirectory(prefix='rr-noversion-') as td:
+            pkg = os.path.join(td, 'release_rollup')
+            shutil.copytree(os.path.join(SRC, 'release_rollup'), pkg, ignore=shutil.ignore_patterns('VERSION', '__pycache__'))
+            r = subprocess.run([sys.executable, '-c', 'import release_rollup as r; print(r.__version__); print(r.__file__)'],
+                               capture_output=True, text=True, env=dict(os.environ, PYTHONPATH=td), check=True)
+        got, where = r.stdout.splitlines()
+        self.assertEqual(got, ver)
+        self.assertEqual(os.path.dirname(where), pkg)
+
     def test_every_place_agrees(self):
         top = os.path.join(HERE, '..')
         with open(os.path.join(top, 'VERSION')) as f:

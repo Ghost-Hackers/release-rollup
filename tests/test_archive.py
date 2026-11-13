@@ -290,8 +290,8 @@ class Safety(Base):
         self.assertEqual(self.visible(), ['a.bin', OUT])
 
     def test_linux_refuses_hostile_names_on_disk(self):
-        # Linux only: these names exist on a Linux disk. Windows cannot hold them (backslash, drive colon,
-        # control characters); there they only come inside an archive, see the next test.
+        # Linux only: Windows can't create these names. test_hostile_names_inside_an_archive_are_refused_on_every_host
+        # covers them inside an archive.
         for bad in ('a\\b.zip', 'new\nline.zip', 'c:evil.zip', 'ctl\x01.zip', 'tab\t.zip'):
             with self.subTest(bad):
                 d = os.path.join(self.tmp, 'h%d' % len(os.listdir(self.tmp)))

@@ -29,3 +29,16 @@ release_rollup = ["VERSION"]
 include = ["src", "tests", "tools"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
+extraPaths = ["src", "tools"]
+
+# Read by tools/check.sh; lines that can't be covered are listed in tools/coverage_exclusions.tsv.
+[tool.coverage.run]
+branch = true
+source_pkgs = ["release_rollup"]
+patch = ["subprocess"]
+
+[tool.coverage.paths]
+release_rollup = ["src/release_rollup", "*/rr-noversion-*/release_rollup"]
+
+[tool.coverage.report]
+show_missing = true

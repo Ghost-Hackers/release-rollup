@@ -1,0 +1,31 @@
+# Lines and branches no real test can reach. Tab-separated:
+# file	line, or from->to for a branch	host (all, linux or windows)	the line's text, stripped	proof
+# For a branch the text is that of the "from" line. A negative "to" is coverage's exit from the function
+# starting at that line. tools/check_coverage.py checks this list.
+src/release_rollup/cli.py	34	all	return 'a file name was refused (%s); check for a name this system cannot open (on Windows: CON, NUL, a trailing dot or space)' % e	describe() gets a ValueError only from path functions fed a NUL, and argv can't carry a NUL (execve and CreateProcess end the string there); zip names with a NUL are refused as unsafe names first, and container.py turns parse_manifest's ValueError into Fail.
+src/release_rollup/container.py	177	linux	if len(path) < 200 or path.startswith('\\\\?\\'):	long_path() returns at the os.name check above off Windows.
+src/release_rollup/container.py	178	linux	return path	long_path() returns at the os.name check above off Windows.
+src/release_rollup/container.py	179	linux	if path.startswith('\\\\'):	long_path() returns at the os.name check above off Windows.
+src/release_rollup/container.py	180	linux	return '\\\\?\\UNC\\' + path[2:]	long_path() returns at the os.name check above off Windows.
+src/release_rollup/container.py	181	linux	return '\\\\?\\' + path	long_path() returns at the os.name check above off Windows.
+src/release_rollup/container.py	556	all	raise Fail('sha256 collision on %s; sources kept' % key)	Needs two different byte strings with the same sha256 and a different length or crc32, a sha256 collision.
+src/release_rollup/core.py	233	linux	raise Fail('%s name%s Windows cannot hold, so Windows could not restore it. %s'	host_is_windows() is False off Windows; test_windows covers this on the Windows host.
+src/release_rollup/core.py	236	linux	raise Fail('cannot %s: %s name%s Windows cannot hold. %s. Rename or remove %s first. '	host_is_windows() is False off Windows; test_windows covers this on the Windows host.
+src/release_rollup/core.py	404	all	raise Fail('%s failed the check (%s); sources kept' % (label, why))	verify() rereads the sources write_rollup just read and hashes the written members; a mismatch needs a source to change between the two reads or the disk to corrupt data.
+src/release_rollup/core.py	777	all	return 'refused', 0, 0, 'the new zip failed the check (%s)' % why	verify() rereads the sources write_rollup just read and hashes the written members; a mismatch needs a source to change between the two reads or the disk to corrupt data.
+src/release_rollup/core.py	947	all	raise Fail('%s failed the check (%s); sources kept' % (label, why))	Nothing was added, so verify() compares the archive with its own entries, which Rollup.check() just read and passed.
+src/release_rollup/container.py	290->291	all	if left < 0:	zipfile never returns more than an entry's file_size, and Rollup._need() refuses a blob whose file_size differs from the length the manifest gives it.
+src/release_rollup/container.py	291	all	break	zipfile never returns more than an entry's file_size, and Rollup._need() refuses a blob whose file_size differs from the length the manifest gives it.
+src/release_rollup/container.py	301->302	all	if not chunk:	_check_refs() keeps the refs rising and inside skeleton_size, so the parts add up to skeleton_size, which Rollup._need() matched to the entry's file_size; zipfile delivers exactly that many bytes or raises.
+src/release_rollup/container.py	302	all	raise Fail('skeleton %s of %s is too short' % (skeleton, self._e['path']))	_check_refs() keeps the refs rising and inside skeleton_size, so the parts add up to skeleton_size, which Rollup._need() matched to the entry's file_size; zipfile delivers exactly that many bytes or raises.
+src/release_rollup/core.py	368->370	all	if os.path.exists(plain):	plain comes from mkstemp and only the os.replace() on the return path above moves it, so it always exists when the try falls through.
+src/release_rollup/core.py	756	all	except READ_ERRORS as e:	files() of a plain zip only lists the central directory read at open, rollup_shaped() is a name match, and check() returns every read error as its reason.
+src/release_rollup/core.py	757	all	return 'refused', 0, 0, reason(e)	files() of a plain zip only lists the central directory read at open, rollup_shaped() is a name match, and check() returns every read error as its reason.
+src/release_rollup/core.py	762	linux	except Fail as e:	screen_names() raises only when host_is_windows(); elsewhere it warns.
+src/release_rollup/core.py	763	linux	return 'refused', 0, 0, str(e)	screen_names() raises only when host_is_windows(); elsewhere it warns.
+src/release_rollup/core.py	789	all	except READ_ERRORS as e:	Every zip read in this try repeats one that z.check() above just finished without error on the same file, so it needs the file to change during the run.
+src/release_rollup/core.py	790	all	return 'refused', 0, 0, 'could not be written, a file is unreadable (%s)' % reason(e)	Every zip read in this try repeats one that z.check() above just finished without error on the same file, so it needs the file to change during the run.
+src/release_rollup/core.py	782	linux	except OSError:	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.
+src/release_rollup/core.py	783	linux	shutil.copy2(path, old)	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.
+src/release_rollup/core.py	938	linux	except OSError:	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.
+src/release_rollup/core.py	939	linux	shutil.copy2(target, keep_old)	A normal user can't mount a filesystem without hard links on Linux here or in CI, so the copy fallback is covered by the Windows test on a FAT32 disk.

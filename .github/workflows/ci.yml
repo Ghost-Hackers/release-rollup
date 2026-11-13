@@ -42,6 +42,9 @@ jobs:
       - name: Show the Python version
         run: python --version
 
+      - name: Install coverage.py
+        run: python -m pip install coverage==7.17.3
+
       # Some tests fill a real disk (tests/smallfs.py). They need RR_SMALLFS, a folder on a
       # filesystem of a few MB, and fail without it. Both steps below export it for the later steps.
       - name: Make a small filesystem for the disk-full tests (Linux)
@@ -73,6 +76,28 @@ jobs:
           New-Item -ItemType Directory -Path 'S:\tests' | Out-Null
           Get-PSDrive S
           "RR_SMALLFS=S:\tests" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Make a filesystem without hard links (Windows)
+        # 64 MB FAT32 drive T:. FAT has no hard links, so NoHardLinks in tests/test_edges.py
+        # tests the copy fallback.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'nolinks.vhd'
+          $script = Join-Path $env:RUNNER_TEMP 'nolinks.diskpart'
+          @(
+            "create vdisk file=`"$vhd`" maximum=64 type=fixed"
+            "select vdisk file=`"$vhd`""
+            'attach vdisk'
+            'create partition primary'
+            'format fs=fat32 quick label=nolinks'
+            'assign letter=T'
+          ) | Set-Content -Encoding ascii $script
+          diskpart /s $script
+          if ($LASTEXITCODE -ne 0) { throw "diskpart failed with exit code $LASTEXITCODE" }
+          New-Item -ItemType Directory -Path 'T:\tests' | Out-Null
+          Get-PSDrive T
+          "RR_NOLINKS_FS=T:\tests" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Run the unit tests
         # The summary must be a bare OK. "OK (skipped=N)" fails the job: every test

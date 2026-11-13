@@ -3,6 +3,9 @@
 RR_SMALLFS names a folder on a filesystem of a few MB. tools/check.sh makes one by itself on
 Linux (a tmpfs in a private mount namespace). CI makes one on both systems before the tests,
 see .github/workflows/ci.yml. Without it these tests fail and say how to set it up.
+
+RR_NOLINKS_FS names a folder on a filesystem without hard links, for the Windows tests of the
+copy that stands in for a link. CI makes one on a FAT32 VHD.
 """
 import os
 import random
@@ -31,6 +34,34 @@ def folder(case: unittest.TestCase) -> str:
                   % (ENV, base, total, LIMIT))
     d = tempfile.mkdtemp(prefix='rr-', dir=base)
     case.addCleanup(shutil.rmtree, d, True)
+    return d
+
+
+NOLINKS_ENV = 'RR_NOLINKS_FS'
+NOLINKS_HOWTO = ('This test needs a folder on a filesystem without hard links. On Windows, as an '
+                 'administrator, attach a fixed VHD of 64 MB formatted FAT32 (diskpart: create vdisk file=... '
+                 'maximum=64 type=fixed, attach vdisk, create partition primary, format fs=fat32 quick, '
+                 'assign letter=T) and set %s to a folder on it.' % NOLINKS_ENV)
+
+
+def nolinks_folder(case: unittest.TestCase) -> str:
+    """A fresh, empty folder where os.link fails, removed when the test ends."""
+    base = os.environ.get(NOLINKS_ENV, '')
+    if not base:
+        case.fail('%s is not set. %s' % (NOLINKS_ENV, NOLINKS_HOWTO))
+    if not os.path.isdir(base):
+        case.fail('%s=%s is not a folder. %s' % (NOLINKS_ENV, base, NOLINKS_HOWTO))
+    d = tempfile.mkdtemp(prefix='rr-', dir=base)
+    case.addCleanup(shutil.rmtree, d, True)
+    probe = os.path.join(d, 'probe')
+    open(probe, 'wb').close()
+    try:
+        os.link(probe, probe + '.link')
+    except OSError:
+        pass
+    else:
+        case.fail('%s=%s takes hard links. %s' % (NOLINKS_ENV, base, NOLINKS_HOWTO))
+    os.remove(probe)
     return d
 
 

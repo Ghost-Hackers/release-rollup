@@ -260,6 +260,42 @@ core.upgrade(%r, trash=core.move_trash(%r), say=lambda *_: None)
         self.assertTrue(os.path.exists(left))
         self.assertTrue(any('left .0.1.zip.upgrade-old alone' in s for s in self.said), self.said)
 
+    def test_a_leftover_that_is_not_a_zip_is_not_trashed(self):
+        self.plain()
+        self.up()
+        left = os.path.join(self.root, '.0.1.zip.upgrade-old')
+        write(left, b'not a zip')
+        self.up()
+        self.assertEqual(read(left), b'not a zip')
+        self.assertTrue(any(s.startswith('left .0.1.zip.upgrade-old alone: ') for s in self.said), self.said)
+
+    def test_a_leftover_next_to_a_damaged_zip_is_not_trashed(self):
+        z = self.plain()
+        self.up()
+        left = os.path.join(self.root, '.0.1.zip.upgrade-old')
+        shutil.copy2(os.path.join(self.tmp, 'old-zips', '.0.1.zip.upgrade-old'), left)
+        with zipfile.ZipFile(z) as p:
+            info = p.getinfo(TD.MANIFEST)
+        with open(z, 'r+b') as f:
+            f.seek(info.header_offset + 30 + len(info.filename))
+            f.write(b'\xff\xff')
+        keep = TD.sha_file(left)
+        with self.assertRaisesRegex(Fail, '0.1.zip'):
+            self.up()
+        self.assertEqual(TD.sha_file(left), keep)
+        self.assertTrue(any(s.startswith('left .0.1.zip.upgrade-old alone: ') for s in self.said), self.said)
+
+    def test_linux_name_a_rollup_cannot_hold_is_refused_and_untouched(self):
+        z = os.path.join(self.root, '0.1.zip')
+        with zipfile.ZipFile(z, 'w') as w:
+            w.writestr('v0.1.0/a\x01b.bin', TD.noise(4000))
+            w.writestr('v0.1.1/c.bin', TD.noise(4000))
+        before = TD.snapshot(self.tmp)
+        with self.assertRaisesRegex(Fail, '0.1.zip'):
+            self.up()
+        self.assertEqual(TD.snapshot(self.tmp), before)
+        self.assertTrue(any("cannot hold 'v0.1.0/a\\x01b.bin' (control character" in s for s in self.said), self.said)
+
     def test_a_member_cut_short_is_refused_with_a_reason_and_untouched(self):
         # A bare EOFError has no text: the refusal must still say why, before anything is written.
         z = self.plain()
