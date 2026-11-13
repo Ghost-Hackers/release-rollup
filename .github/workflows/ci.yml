@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, windows-11-arm]
     defaults:
       run:
         shell: bash
@@ -123,21 +123,27 @@ jobs:
           mkdir -p dist
           git archive --prefix=release-rollup-$V/ -o dist/release-rollup-$V.zip HEAD
 
-      - name: Download the published 0.1.0 zip
+      - name: Download the newest 0.1.x release zip
         # For the --cross check below. Forks have no releases, so always fetch from upstream.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download v0.1.0 -R Ghost-Hackers/release-rollup --pattern 'release-rollup-0.1.0.zip' -D old
+        run: |
+          tag=$(git ls-remote --tags --refs https://github.com/Ghost-Hackers/release-rollup 'v0.1.*' \
+            | sed 's|.*refs/tags/||' | grep -E '^v0\.1\.[0-9]+$' | sort -V | tail -1)
+          [ -n "$tag" ] && [ "$tag" != null ] || { echo "no 0.1.x release found"; exit 1; }
+          echo "cross-checking against $tag"
+          gh release download "$tag" -R Ghost-Hackers/release-rollup --pattern "release-rollup-${tag#v}.zip" -D old
+          echo "OLD_ZIP=old/release-rollup-${tag#v}.zip" >> "$GITHUB_ENV"
 
       - name: Run the end-to-end checks
         run: |
           V=$(cat VERSION)
           PY=python bash tools/e2e.sh dist/release-rollup-$V.zip 2>&1 | tee logs/e2e.log
 
-      - name: Run the end-to-end checks against 0.1.0
+      - name: Run the end-to-end checks against the newest 0.1.x
         run: |
           V=$(cat VERSION)
-          PY=python bash tools/e2e.sh dist/release-rollup-$V.zip --cross old/release-rollup-0.1.0.zip 2>&1 | tee logs/e2e-cross.log
+          PY=python bash tools/e2e.sh dist/release-rollup-$V.zip --cross "$OLD_ZIP" 2>&1 | tee logs/e2e-cross.log
 
       - name: Run the end-to-end self-check
         # Proves the e2e script fails on a zip with one changed byte.
