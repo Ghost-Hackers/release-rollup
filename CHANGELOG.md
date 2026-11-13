@@ -13,6 +13,16 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 - `run` and `pre` left out a subfolder they couldn't read, or a link to another folder, and still trashed the release. Both now stop the run before anything changes and name the path (#33).
 
+## [0.1.1] - 2026-11-13
+
+### Changed
+
+- `run` and `pre` now say a deduplicated rollup from release-rollup 0.2 or later needs a newer release-rollup, instead of calling its `.rollup` folder an unexpected entry. They still refuse it and change nothing (#4).
+
+### Fixed
+
+- `run` and `pre` left out a subfolder they couldn't read, or a link to another folder, and still trashed the release. Both now stop the run before anything changes and name the path (#33).
+
 ## [0.2.0-beta.2] - 2026-11-12
 
 ### Added
