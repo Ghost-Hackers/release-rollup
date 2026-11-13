@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.1.1-rc.1] - 2026-11-13
+
+No changes since 0.1.1-beta.1.
+
 ## [0.1.1-beta.1] - 2026-11-13
 
 ### Changed
