@@ -27,6 +27,10 @@ STAMP = (1980, 1, 1, 0, 0, 0)
 PRE_DIR_RE = re.compile(r'^v' + VER + r'-(' + '|'.join(STAGES) + r')\.(\d+)$')
 PRE_ZIP_RE = re.compile(r'^v' + VER + r'-(' + '|'.join(STAGES) + r')\.x\.zip$')
 PRE_MARKERS = ('PRERELEASE.json', 'SHA256SUMS')
+# release-rollup 0.2 and later can write deduplicated rollups: README.txt plus a .rollup/ folder of
+# shared content instead of v<version>/ folders. This version can't read them.
+NEWER_TOP = '.rollup'
+NEWER = '%s was written by release-rollup 0.2 or later (deduplicated); upgrade release-rollup to handle it'
 
 
 class Fail(Exception):
@@ -109,6 +113,8 @@ def scan(root, markers=DEFAULT_MARKERS):
                     tops = {i.split('/')[0] for i in z.namelist()}
             except zipfile.BadZipFile as e:
                 raise Fail('%s is not a readable zip (%s); nothing was changed' % (name, e))
+            if NEWER_TOP in tops:
+                raise Fail(NEWER % name)
             vers = []
             for t in tops:
                 m = DIR_RE.match(t)
@@ -383,6 +389,8 @@ def scan_pre(stage_dir, stage, markers=PRE_MARKERS):
                     tops = {i.split('/')[0] for i in z.namelist()}
             except zipfile.BadZipFile as e:
                 raise Fail('%s/%s is not a readable zip (%s); nothing was changed' % (stage, name, e))
+            if NEWER_TOP in tops:
+                raise Fail(NEWER % ('%s/%s' % (stage, name)))
             for t in tops:
                 tm = PRE_DIR_RE.match(t)
                 if not tm or tm.group(4) != stage or tuple(map(int, tm.groups()[:3])) != base:
