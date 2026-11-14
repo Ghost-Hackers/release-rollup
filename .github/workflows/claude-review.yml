@@ -56,7 +56,7 @@ jobs:
 
             Review this pull request. Read .github/REVIEWING.md first: it holds the project's rules, and a change that breaks one is a finding.
 
-            Before commenting, read the review threads already on the pull request. Don't raise a point again that is resolved or already open; if a new commit fixes an open point, say so in that thread.
+            Before commenting, read the review threads already on the pull request with gh pr view --json reviews,comments. Don't raise a point again that is resolved or already open; if a new commit fixes an open point, say so in that thread.
 
             Report only real problems, each as an inline comment on the line it is about, starting with its severity:
             - [P1] data loss or damage, a security hole, or a wrong result
@@ -69,7 +69,7 @@ jobs:
             Finish by setting the summary comment to one line, "Review: no findings" or "Review: N findings (P1: a, P2: b, P3: c)", followed by the findings as a short list.
           claude_args: |
             --model claude-sonnet-5-5
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh run view:*),Bash(gh api:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh run view:*)"
       - name: Check that Claude ran
         if: always() && steps.claude.outcome != 'skipped'
         env:
