@@ -29,7 +29,6 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-      id-token: write
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,12 +48,15 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job's own token: GitHub limits it to the permissions above, so nothing can be pushed.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # On a pull request from someone without write access, don't run code from its checkout.
           restrict_untrusted_prs: true
           additional_permissions: |
             actions: read
           claude_args: |
             --model claude-opus-5-5
+            --disallowedTools "Edit,Write,MultiEdit,NotebookEdit"
             --append-system-prompt "Read .github/REVIEWING.md for the project's rules before you answer. You have read-only access: suggest code changes as GitHub suggestion blocks, never push."
       - name: Check that Claude ran
         if: always() && steps.claude.outcome != 'skipped'
