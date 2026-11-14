@@ -41,6 +41,16 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: python tools/check_release.py versions --tag "$TAG"
 
+      - name: Install coverage.py
+        run: python -m pip install coverage==7.17.3
+
+      # check.sh's disk-full tests need RR_SMALLFS, a folder on a filesystem of a few MB.
+      - name: Make a small filesystem for the disk-full tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/small"
+          sudo mount -t tmpfs -o size=4m,mode=1777 tmpfs "$RUNNER_TEMP/small"
+          echo "RR_SMALLFS=$RUNNER_TEMP/small" >> "$GITHUB_ENV"
+
       - name: Run the tests
         run: PY=python bash tools/check.sh
 
