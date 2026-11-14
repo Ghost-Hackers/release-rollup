@@ -10,8 +10,8 @@ Paths from zips, manifests and arguments stay inside the folder given. `..`, abs
 
 ## Tests
 
-- A change to Python code under `src/`, `tools/` or `tests/` comes with tests, and they cause failures with real input: damaged zips, a full disk (`RR_SMALLFS`), read-only files. No mocks or patches. The one exception is the 64 GiB limit in `tests/test_dedupe.py`, which would need 64 GiB of test data. Workflow changes are checked by the runs they start on the pull request, and docs need no tests.
-- Coverage stays at 100% of lines and branches on Linux and Windows. A line no real input can reach goes in `tools/coverage_exclusions.tsv` with the proof, not under a forced test.
+- A change to Python code under `src/`, `tools/` or `tests/` comes with tests that run it against damaged zips, a full disk (`RR_SMALLFS`) and read-only files, without mocks or patches. The one exception is the 64 GiB limit in `tests/test_dedupe.py`, which would need 64 GiB of test data. Workflow changes are checked by the runs they start on the pull request, and docs need no tests.
+- Coverage stays at 100% of lines and branches on Linux and Windows. A line no input can reach goes in `tools/coverage_exclusions.tsv` with the proof, not under a forced test.
 - Tests never skip. A test for one system is listed in `tests/hosts.tsv`.
 
 ## Changes

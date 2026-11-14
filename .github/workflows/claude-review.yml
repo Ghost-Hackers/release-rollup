@@ -60,7 +60,7 @@ jobs:
 
             Before commenting, read the review threads already on the pull request with gh pr view --json reviews,comments. Don't raise a point again that is resolved or already open; if a new commit fixes an open point, say so in that thread.
 
-            Report only real problems, each as an inline comment on the line it is about, starting with its severity:
+            Report only problems that need a change, each as an inline comment on the line it is about, starting with its severity:
             - [P1] data loss or damage, a security hole, or a wrong result
             - [P2] a bug in a less common case, a missing test, or a rule from REVIEWING.md broken
             - [P3] docs, comments or wording
