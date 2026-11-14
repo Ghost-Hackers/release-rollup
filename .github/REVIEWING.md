@@ -6,7 +6,7 @@ What a change to release-rollup has to meet before it merges.
 
 release-rollup zips users' release folders and moves the originals to the trash. A change must never lose a file: every zip is checked against its sources before anything is trashed, and a run that can't finish leaves the folder as it was.
 
-Paths from zips, manifests and arguments stay inside the folder given. `..`, absolute paths, drive letters, links, junctions and names Windows can't hold are refused.
+Paths from zips, manifests and arguments stay inside the folder given. `..`, absolute paths, drive letters, links and junctions are refused. Names Windows can't hold are refused on Windows and get a warning elsewhere, since a rollup holding them couldn't be restored there.
 
 ## Tests
 
