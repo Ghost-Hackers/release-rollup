@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@6eef738d1d7ed4d9549b0276bd600d8a4a8b5246 (sha256 b5c0641d849c2a5b96376ae1646d446080527ff2ec71dcae6e0a8d89da210f72). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@fa8fb9820f98ad111406ba4b251a439cb94cfd3a (sha256 e94e3a3d49992caddd0c56ad7417291ab1d8bd7ad9131b40b9953ed1577ea678). Edit it there, not here.
 name: Claude
 
 on:
@@ -176,6 +176,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.issue.number }}
           ASKER: ${{ github.event.comment.user.login || github.event.issue.user.login }}
+          IS_PR: ${{ github.event.issue.pull_request != null }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
         run: |
           if [ "$CONCLUSION" != "success" ]; then
             echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success"
@@ -186,4 +189,20 @@ jobs:
             exit 1
           fi
           { printf '@%s\n\n' "$ASKER"; jq -r .answer <<<"$RESULT"; } > "$RUNNER_TEMP/answer.md"
+          # The answer was written from the pull request as it was when the data was collected. Name that commit, and say
+          # so when a push or a retarget came in meanwhile, so the answer isn't taken for one about the new head.
+          if [ "$IS_PR" = true ]; then
+            heads=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,baseRefName \
+              --jq '[.headRefOid, .baseRefName] | @tsv')
+            read -r now now_base <<<"$heads"
+            {
+              printf '\n---\n'
+              if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
+                printf 'This answer is about %s into %s. The pull request moved to %s into %s while it was written; comment "@claude" with the question again for an answer about the new commit.\n' \
+                  "${SHA:0:7}" "$BASE" "${now:0:7}" "$now_base"
+              else
+                printf 'Answered at %s.\n' "${SHA:0:7}"
+              fi
+            } >> "$RUNNER_TEMP/answer.md"
+          fi
           gh issue comment "$NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/answer.md"
