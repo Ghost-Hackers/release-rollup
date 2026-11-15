@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@606d4f50c7cd1b56c4c27672a1b019f45f0594e3 (sha256 c97915ac2e335356af3c26a6efaf75dcf979bb20fc31603734b49834b62a6cda). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@463e9c5e249a36fdbba28073f41a743d0796b66d (sha256 ca6a2089d3b06d6ad50b9002a764a29a3b77205b04149eb70337bf6421fde721). Edit it there, not here.
 name: Claude review
 
 on:
@@ -108,7 +108,9 @@ jobs:
             read -r mode _ object <<< "${entry%%$'\t'*}"
             case "$mode" in
               120000 | 160000) printf '%s\n' "$path" >> "$dir/symlinks-left-out.txt" ;;
-              *) mkdir -p "$dir/files/$(dirname -- "$path")"
+              *) # Parameter expansion, not dirname in $(...): that drops a trailing newline from a folder name.
+                 case "$path" in */*) parent=${path%/*} ;; *) parent=. ;; esac
+                 mkdir -p -- "$dir/files/$parent"
                  git cat-file blob "$object" > "$dir/files/$path" ;;
             esac
           done
