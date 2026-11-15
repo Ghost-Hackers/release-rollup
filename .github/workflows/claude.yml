@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@cbcb66c16621948bb23e7414f1c68e8c74c492df (sha256 0f69107015bcb01176306068680c8460875f762ee11f676c6f44264fb9b1a6fb). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@6eef738d1d7ed4d9549b0276bd600d8a4a8b5246 (sha256 b5c0641d849c2a5b96376ae1646d446080527ff2ec71dcae6e0a8d89da210f72). Edit it there, not here.
 name: Claude
 
 on:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   answer:
-    name: Answer @claude
+    name: Answer
     # "@claude review" and "@claude security review" on a pull request start their own workflows.
     # Bots are skipped: review bots quote "@claude" in their comments, and the action refuses them anyway.
     # Only owners, members and collaborators start a run, as with the reviews: on a public repo anyone else could
@@ -43,10 +43,35 @@ jobs:
             echo "::error::Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as an org secret"
             exit 1
           fi
-      # The default branch, never a pull request's files: Claude Code loads settings, hooks and MCP servers from here.
+      - name: Find the pull request
+        id: pr
+        if: github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          read -r sha base base_sha head_repo < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
+            --json headRefOid,baseRefName,baseRefOid,headRepository,headRepositoryOwner \
+            --jq '[.headRefOid, .baseRefName, .baseRefOid, (.headRepositoryOwner.login + "/" + .headRepository.name)] | @tsv')
+          # As with the reviews: a fork's files are someone else's text, read by a run that holds the API secret.
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::Questions on pull requests from forks aren't answered"
+            exit 1
+          fi
+          # A comment runs the default branch's workflow, so only pull requests into that branch match their rules.
+          default=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)
+          if [ "$base" != "$default" ]; then
+            echo "::error::Questions on pull requests are only answered for pull requests into $default"
+            exit 1
+          fi
+          { echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; } >> "$GITHUB_OUTPUT"
+      # The base branch for a pull request, the default branch for an issue, never a pull request's files: the
+      # action loads settings, hooks and MCP servers from its working folder.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          # The base branch by name: CodeQL counts a SHA read from gh pr view as coming from the pull request. The
+          # collection checks that this is still the base commit captured with the head.
+          ref: ${{ steps.pr.outputs.base || github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
       - name: Collect the request for Claude
@@ -56,25 +81,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.issue.number }}
           IS_PR: ${{ github.event.issue.pull_request != null }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          TITLE: ${{ github.event.issue.title }}
           REQUEST: ${{ github.event.comment.body || github.event.issue.body }}
         run: |
+          if [ "$IS_PR" = true ] && [ "$(git rev-parse HEAD)" != "$BASE_SHA" ]; then
+            echo '::error::The base branch moved between reading the pull request and the checkout, so the rules and the diff would come from different commits; comment "@claude" with your question to ask again'
+            exit 1
+          fi
           dir=.claude-context
           rm -rf -- "$dir"
           mkdir -p "$dir"
-          printf '%s\n' "$REQUEST" > "$dir/request.md"
+          # A new issue can ask in its title alone, so the title goes in with the body. A comment is the message.
+          if [ "$GITHUB_EVENT_NAME" = issues ]; then
+            printf '# %s\n\n%s\n' "$TITLE" "$REQUEST"
+          else
+            printf '%s\n' "$REQUEST"
+          fi > "$dir/request.md"
           gh issue view "$NUMBER" -R "$GITHUB_REPOSITORY" --json number,title,body,author,labels,comments > "$dir/issue.json"
           if [ "$IS_PR" = true ]; then
-            sha=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
             auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
             git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin \
               "+refs/pull/$NUMBER/head:refs/remotes/origin/pull/$NUMBER"
-            git cat-file -e "$sha^{commit}"
-            gh pr diff "$NUMBER" -R "$GITHUB_REPOSITORY" > "$dir/diff.patch"
+            git cat-file -e "$SHA^{commit}"
+            # From the two commits, like the pull request's own diff, so a base push mid-run can't change it.
+            git diff --no-ext-diff --no-textconv "$BASE_SHA...$SHA" > "$dir/diff.patch"
             gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
-              --json title,body,author,baseRefName,headRefName,closingIssuesReferences,files > "$dir/pull-request.json"
+              --json title,body,author,labels,baseRefName,headRefName,closingIssuesReferences > "$dir/pull-request.json"
+            git log --format='commit %H%nAuthor: %an%n%n%B' "$BASE_SHA..$SHA" > "$dir/commits.txt"
             mkdir -p "$dir/files"
             : > "$dir/symlinks-left-out.txt"
-            git ls-tree -r -z "$sha" | while IFS= read -r -d '' entry; do
+            git ls-tree -r -z "$SHA" | while IFS= read -r -d '' entry; do
               path=${entry#*$'\t'}
               read -r mode _ object <<< "${entry%%$'\t'*}"
               case "$mode" in
@@ -83,10 +122,12 @@ jobs:
                    git cat-file blob "$object" > "$dir/files/$path" ;;
               esac
             done
-            # The diff and description follow the pull request, the files follow sha: they must still agree.
-            now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
-            if [ "$now" != "$sha" ]; then
-              echo "::error::The pull request moved from ${sha:0:7} to ${now:0:7} while its data was collected; ask again"
+            # The files, diff and commits are pinned to SHA and BASE_SHA, but the description follows the pull
+            # request. A push to the base branch changes neither; a new head or a retarget to another base does.
+            read -r now now_base < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,baseRefName \
+              --jq '[.headRefOid, .baseRefName] | @tsv')
+            if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
+              echo '::error::The pull request moved to a new head or base while its data was collected; comment "@claude" with your question to ask again'
               exit 1
             fi
           fi
@@ -105,11 +146,15 @@ jobs:
             REPO: ${{ github.repository }}
             NUMBER: ${{ github.event.issue.number }}
 
-            Someone mentioned @claude in this repo. Their message is in `.claude-context/request.md`. The working
-            folder is the repo's default branch. `.claude-context/` also holds the issue or pull request with its
-            comments (`issue.json`), and for a pull request its description (`pull-request.json`), its changes
-            (`diff.patch`) and its files as plain files (`files/`, symlinks and submodules listed in
-            `symlinks-left-out.txt`).
+            Someone mentioned @claude in this repo. Their message is in `.claude-context/request.md`, headed by the
+            issue's title when it came with a new issue. The working folder is the repo's default branch, which is
+            also the base of any pull request asked about. `.claude-context/` also holds the issue or pull request
+            with its comments (`issue.json`), and for a pull request:
+            - `pull-request.json`: title, description, author, labels and the issues it closes
+            - `diff.patch`: its changes against the base branch
+            - `commits.txt`: its commits
+            - `files/`: its files at the head commit as plain files (symlinks and submodules are left out and
+              listed in `symlinks-left-out.txt`)
 
             Read `.github/REVIEWING.md` in the working folder first if it exists: it holds the project's rules. Then
             answer the message. You have no shell and can't edit files, commit or push; when a change is asked for,

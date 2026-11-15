@@ -1,5 +1,5 @@
-# Copied from Ghost-Hackers/ci-workflows@7340a08b2258208d0d7152966707baf4eee8ee99 (sha256 db3093f93b127257573c77c15c5ebf94fbe1d51e4a96c71910982394ccb42c3e). Edit it there, not here.
-name: Claude copy check
+# Copied from Ghost-Hackers/ci-workflows@6eef738d1d7ed4d9549b0276bd600d8a4a8b5246 (sha256 56ff975faf875b34bf19bbd1a6a056352866b862abd57a43f700762e09c6f1fa). Edit it there, not here.
+name: Synced files
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    name: Claude copy check
+    name: Unchanged
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@cbcb66c16621948bb23e7414f1c68e8c74c492df (sha256 479359a8e03c046a5c3e769712120be511c79cccc9e11b4e865638ac84d51f67). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@6eef738d1d7ed4d9549b0276bd600d8a4a8b5246 (sha256 8a507db0d5c772b81db60a03f57017c62b98ce98534900d3d8941d0765a7c9e8). Edit it there, not here.
 name: Claude review
 
 on:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   review:
-    name: Claude review
+    name: Review
     if: |
       (contains(fromJSON('["pull_request_target", "pull_request"]'), github.event_name) &&
        github.event.pull_request.draft == false &&
