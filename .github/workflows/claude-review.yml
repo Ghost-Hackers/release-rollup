@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@407c5a1be409b5e5cc4486ecf7638932127cbd48 (sha256 51655aa4fbec4382f44af192463072df5b8c033973a0aa0b9793758c6f34a1c5). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@a560f31ca1986317af4208c979a053cc265decdd (sha256 7a0551e92b42c3edd90a6f0f002199e39aad77d4b6be7df1978b155cb1097f64). Edit it there, not here.
 name: Claude review
 
 on:
@@ -74,8 +74,9 @@ jobs:
       # its working folder, and those must not come from the branch under review.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The base commit captured with the head, so the rules and the diff can't come from different commits.
-          ref: ${{ steps.pr.outputs.base_sha }}
+          # The base branch by name: CodeQL counts a SHA read from gh pr view as coming from the pull request. The
+          # collection checks that this is still the base commit captured with the head.
+          ref: ${{ steps.pr.outputs.base }}
           fetch-depth: 0
           persist-credentials: false
       - name: Collect the pull request for Claude
@@ -88,6 +89,10 @@ jobs:
           BASE: ${{ steps.pr.outputs.base }}
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
+          if [ "$(git rev-parse HEAD)" != "$BASE_SHA" ]; then
+            echo '::error::The base branch moved between reading the pull request and the checkout, so the rules and the diff would come from different commits; comment "@claude review" to run it again'
+            exit 1
+          fi
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin \
             "+refs/pull/$NUMBER/head:refs/remotes/origin/pull/$NUMBER"
