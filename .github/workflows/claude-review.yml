@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@6eef738d1d7ed4d9549b0276bd600d8a4a8b5246 (sha256 8a507db0d5c772b81db60a03f57017c62b98ce98534900d3d8941d0765a7c9e8). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@606d4f50c7cd1b56c4c27672a1b019f45f0594e3 (sha256 c97915ac2e335356af3c26a6efaf75dcf979bb20fc31603734b49834b62a6cda). Edit it there, not here.
 name: Claude review
 
 on:
@@ -245,6 +245,8 @@ jobs:
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
           RESULT: ${{ steps.claude.outputs.structured_output }}
           HEAD_SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
           NUMBER: ${{ steps.pr.outputs.number }}
           GH_TOKEN: ${{ github.token }}
           MARKER: claude-review
@@ -270,7 +272,7 @@ jobs:
           read -r p0 p1 p2 p3 < <(jq -r '[.p0, .p1, .p2, .p3] | @tsv' <<<"$RESULT")
           summary=$(jq -r .summary <<<"$RESULT")
           {
-            echo "### $TITLE of ${HEAD_SHA:0:7}"
+            echo "### $TITLE of ${HEAD_SHA:0:7} against $BASE at ${BASE_SHA:0:7}"
             echo
             echo "| P0 | P1 | P2 | P3 |"
             echo "|---|---|---|---|"
@@ -283,7 +285,8 @@ jobs:
           else
             counts="P0 $p0, P1 $p1, P2 $p2, P3 $p3"
           fi
-          body=$(printf '<!-- %s -->\n**%s of %s:** %s\n\n%s\n' "$MARKER" "$TITLE" "${commit:0:7}" "$counts" "$summary")
+          body=$(printf '<!-- %s -->\n**%s of %s against %s at %s:** %s\n\n%s\n' "$MARKER" "$TITLE" "${commit:0:7}" "$BASE" \
+            "${BASE_SHA:0:7}" "$counts" "$summary")
           id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id" | tail -n 1)
           if [ -n "$id" ]; then

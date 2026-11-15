@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@fa8fb9820f98ad111406ba4b251a439cb94cfd3a (sha256 e94e3a3d49992caddd0c56ad7417291ab1d8bd7ad9131b40b9953ed1577ea678). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@606d4f50c7cd1b56c4c27672a1b019f45f0594e3 (sha256 fc6e178a07c88e9a8520862c008aa31e6d5bbc2c0a0fdfc72be7b9102c5538cb). Edit it there, not here.
 name: Claude
 
 on:
@@ -179,6 +179,7 @@ jobs:
           IS_PR: ${{ github.event.issue.pull_request != null }}
           SHA: ${{ steps.pr.outputs.sha }}
           BASE: ${{ steps.pr.outputs.base }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
           if [ "$CONCLUSION" != "success" ]; then
             echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success"
@@ -189,8 +190,9 @@ jobs:
             exit 1
           fi
           { printf '@%s\n\n' "$ASKER"; jq -r .answer <<<"$RESULT"; } > "$RUNNER_TEMP/answer.md"
-          # The answer was written from the pull request as it was when the data was collected. Name that commit, and say
-          # so when a push or a retarget came in meanwhile, so the answer isn't taken for one about the new head.
+          # The answer was written from the pull request as it was when the data was collected. Name its head and base
+          # commits, and say so when a push or a retarget came in meanwhile, so the answer isn't taken for one about the
+          # new head.
           if [ "$IS_PR" = true ]; then
             heads=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,baseRefName \
               --jq '[.headRefOid, .baseRefName] | @tsv')
@@ -198,10 +200,11 @@ jobs:
             {
               printf '\n---\n'
               if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
-                printf 'This answer is about %s into %s. The pull request moved to %s into %s while it was written; comment "@claude" with the question again for an answer about the new commit.\n' \
-                  "${SHA:0:7}" "$BASE" "${now:0:7}" "$now_base"
+                printf 'This answer is about %s against %s at %s. The pull request moved to %s into %s while it was written; comment "@claude" with the question again for an answer about the new commit.\n' \
+                  "${SHA:0:7}" "$BASE" "${BASE_SHA:0:7}" "${now:0:7}" "$now_base"
               else
-                printf 'Answered at %s.\n' "${SHA:0:7}"
+                # A push to the base alone doesn't change the answer for the commits it names, so it isn't a move.
+                printf 'Answered at %s against %s at %s.\n' "${SHA:0:7}" "$BASE" "${BASE_SHA:0:7}"
               fi
             } >> "$RUNNER_TEMP/answer.md"
           fi
