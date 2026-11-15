@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@a560f31ca1986317af4208c979a053cc265decdd (sha256 7a0551e92b42c3edd90a6f0f002199e39aad77d4b6be7df1978b155cb1097f64). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@cbcb66c16621948bb23e7414f1c68e8c74c492df (sha256 479359a8e03c046a5c3e769712120be511c79cccc9e11b4e865638ac84d51f67). Edit it there, not here.
 name: Claude review
 
 on:
@@ -115,7 +115,7 @@ jobs:
           # From the two commits, like the pull request's own diff, so a base push mid-run can't change it.
           git diff --no-ext-diff --no-textconv "$BASE_SHA...$SHA" > "$dir/diff.patch"
           gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
-            --json title,body,author,baseRefName,headRefName,closingIssuesReferences > "$dir/pull-request.json"
+            --json title,body,author,labels,baseRefName,headRefName,closingIssuesReferences > "$dir/pull-request.json"
           git log --format='commit %H%nAuthor: %an%n%n%B' "$BASE_SHA..$SHA" > "$dir/commits.txt"
           jq -r '.closingIssuesReferences[].number' "$dir/pull-request.json" | while read -r issue; do
             gh issue view "$issue" -R "$GITHUB_REPOSITORY" --json number,title,body
@@ -199,7 +199,7 @@ jobs:
             - `files/`: the pull request's files at HEAD COMMIT, unpacked as plain files (symlinks and submodules are
               left out and listed in `symlinks-left-out.txt`)
             - `diff.patch`: its changes against BASE BRANCH
-            - `pull-request.json`: title, description, author and the issues it closes
+            - `pull-request.json`: title, description, author, labels and the issues it closes
             - `issues.jsonl`: those issues
             - `commits.txt`: its commits
             - `checks.json` and `failed-run-<id>.log`: its checks and the logs of failed ones

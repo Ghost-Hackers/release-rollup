@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@407c5a1be409b5e5cc4486ecf7638932127cbd48 (sha256 246c6734eb07b2cec034d919e7dccb759146036f690d97201f49c4b749b6d687). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@cbcb66c16621948bb23e7414f1c68e8c74c492df (sha256 0f69107015bcb01176306068680c8460875f762ee11f676c6f44264fb9b1a6fb). Edit it there, not here.
 name: Claude
 
 on:
@@ -15,12 +15,16 @@ jobs:
     name: Answer @claude
     # "@claude review" and "@claude security review" on a pull request start their own workflows.
     # Bots are skipped: review bots quote "@claude" in their comments, and the action refuses them anyway.
+    # Only owners, members and collaborators start a run, as with the reviews: on a public repo anyone else could
+    # spend the subscription, and a runner starts even when the action then refuses them.
     if: |
       (github.event_name == 'issue_comment' && github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '@claude') &&
        !(github.event.issue.pull_request && startsWith(github.event.comment.body, '@claude review')) &&
        !contains(github.event.comment.body, '@claude security review')) ||
       (github.event_name == 'issues' && github.event.issue.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) &&
        (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
