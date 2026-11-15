@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@7340a08b2258208d0d7152966707baf4eee8ee99 (sha256 8fc57c8623b8d078f0a37a2afcd0351a9f6679afab1bfbd2ff82eb527f65cacf). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@407c5a1be409b5e5cc4486ecf7638932127cbd48 (sha256 246c6734eb07b2cec034d919e7dccb759146036f690d97201f49c4b749b6d687). Edit it there, not here.
 name: Claude
 
 on:
@@ -26,7 +26,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pull-requests: write
+      # Reads pull requests only; the answer is posted as an issue comment, which issues: write covers.
+      pull-requests: read
       issues: write
     steps:
       - name: Check the Claude secret

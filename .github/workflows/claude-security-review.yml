@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@7340a08b2258208d0d7152966707baf4eee8ee99 (sha256 65ec740fb69ef4bb6ab50991f3e0c14d27dad60f0aca1d908db608288dc24568). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@407c5a1be409b5e5cc4486ecf7638932127cbd48 (sha256 74bbc0a695206422568b6ce1dc426ac544c52fbf1636e4359267c72debd8517d). Edit it there, not here.
 name: Claude security review
 
 on:
@@ -42,9 +42,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.issue.number }}
         run: |
-          read -r sha base head_repo < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
-            --json headRefOid,baseRefName,headRepository,headRepositoryOwner \
-            --jq '[.headRefOid, .baseRefName, (.headRepositoryOwner.login + "/" + .headRepository.name)] | @tsv')
+          read -r sha base base_sha head_repo < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
+            --json headRefOid,baseRefName,baseRefOid,headRepository,headRepositoryOwner \
+            --jq '[.headRefOid, .baseRefName, .baseRefOid, (.headRepositoryOwner.login + "/" + .headRepository.name)] | @tsv')
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "::error::Pull requests from forks aren't reviewed"
             exit 1
@@ -57,12 +57,13 @@ jobs:
               exit 1
             fi
           fi
-          { echo "number=$NUMBER"; echo "sha=$sha"; echo "base=$base"; } >> "$GITHUB_OUTPUT"
+          { echo "number=$NUMBER"; echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; } >> "$GITHUB_OUTPUT"
       # The base branch, never the pull request's files: Claude Code loads settings, hooks and MCP servers from
       # its working folder, and those must not come from the branch under review.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.pr.outputs.base }}
+          # The base commit captured with the head, so the rules and the diff can't come from different commits.
+          ref: ${{ steps.pr.outputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Collect the pull request for Claude
@@ -73,6 +74,7 @@ jobs:
           NUMBER: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.pr.outputs.sha }}
           BASE: ${{ steps.pr.outputs.base }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin \
@@ -93,10 +95,11 @@ jobs:
                  git cat-file blob "$object" > "$dir/files/$path" ;;
             esac
           done
-          gh pr diff "$NUMBER" -R "$GITHUB_REPOSITORY" > "$dir/diff.patch"
+          # From the two commits, like the pull request's own diff, so a base push mid-run can't change it.
+          git diff --no-ext-diff --no-textconv "$BASE_SHA...$SHA" > "$dir/diff.patch"
           gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
-            --json title,body,author,baseRefName,headRefName,closingIssuesReferences,files > "$dir/pull-request.json"
-          git log --format='commit %H%nAuthor: %an%n%n%B' "origin/$BASE..$SHA" > "$dir/commits.txt"
+            --json title,body,author,baseRefName,headRefName,closingIssuesReferences > "$dir/pull-request.json"
+          git log --format='commit %H%nAuthor: %an%n%n%B' "$BASE_SHA..$SHA" > "$dir/commits.txt"
           jq -r '.closingIssuesReferences[].number' "$dir/pull-request.json" | while read -r issue; do
             gh issue view "$issue" -R "$GITHUB_REPOSITORY" --json number,title,body
           done > "$dir/issues.jsonl"
@@ -106,10 +109,12 @@ jobs:
             | sort -u | while read -r run; do
               gh run view "$run" -R "$GITHUB_REPOSITORY" --log-failed | tail -n 300 > "$dir/failed-run-$run.log"
             done
-          # The diff and description above follow the pull request, the files follow SHA: they must still agree.
-          now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
-          if [ "$now" != "$SHA" ]; then
-            echo "::error::The pull request moved from ${SHA:0:7} to ${now:0:7} while its data was collected; the new push gets its own review"
+          # The files, diff and commits are pinned to SHA and BASE_SHA, but the description and checks follow the pull
+          # request. A push to the base branch changes neither; a new head or a retarget to another base does.
+          read -r now now_base < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,baseRefName \
+            --jq '[.headRefOid, .baseRefName] | @tsv')
+          if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
+            echo '::error::The pull request moved to a new head or base while its data was collected; comment "@claude security review" again'
             exit 1
           fi
       - name: Collect earlier reviews
