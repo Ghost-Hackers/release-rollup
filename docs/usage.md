@@ -8,7 +8,7 @@
 release-rollup run [--root DIR] [--dry-run] [--marker NAME ...] [--trash-dir DIR] [--keep-rc|--keep-pre] [--zip-newest] [--no-dedupe]
 ```
 
-Every release except the newest gets zipped on its own (`v0.1.3.zip`). When the first release of the next minor line shows up, the zips of the old line merge into one named after the line (`0.1.zip`, holding `v0.1.0/`, `v0.1.1/` and so on). At 1.0.0 everything below it becomes `pre-1.0.0.zip`. After that 1.0.x rolls into `1.0.zip` when 1.1.0 appears, and at 2.0.0 all the 1.x line zips roll into `1.x.zip`.
+Every release except the newest gets zipped on its own (`v0.1.3.zip`). When the first release of the next minor line shows up, the zips of the old line merge into one named after the line (`0.1.zip`, holding `v0.1.0/`, `v0.1.1/` and every other 0.1 release). At 1.0.0 everything below it becomes `pre-1.0.0.zip`. After that 1.0.x rolls into `1.0.zip` when 1.1.0 appears, and at 2.0.0 all the 1.x line zips roll into `1.x.zip`.
 
 A folder counts as a published release when it holds `RELEASE_NOTES.md`, `SHA256SUMS` and an `assets/` folder. Pre-release builds (alpha, beta and release candidate) such as `v0.2.0-beta.1` or `v0.2.0-rc.4` never count as a release and are never zipped.
 

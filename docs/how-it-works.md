@@ -9,9 +9,9 @@ Releases live in one folder as `v<version>/` directories. The newest one stays a
 With `--zip-newest` the newest release is zipped on its own as well (`v0.1.3.zip`), with the same check before the folder goes to the trash, so nothing stays unpacked. From then on it follows the same steps as every other release. A rerun finds the zip and does nothing.
 
 1. Every release except the newest is zipped on its own: `v0.1.3.zip`.
-2. When the first release of the next minor line appears, the zips of the old line merge into one zip named after the line: `0.1.zip`, holding `v0.1.0/`, `v0.1.1/` and so on. This also happens for a line with a single release.
+2. When the first release of the next minor line appears, the zips of the old line merge into one zip named after the line: `0.1.zip`, holding `v0.1.0/`, `v0.1.1/` and every other 0.1 release. This also happens for a line with a single release.
 3. When 1.0.0 appears, everything below it merges into `pre-1.0.0.zip`.
-4. After that the same pattern repeats. `1.0.x` rolls into `1.0.zip` when 1.1.0 appears. When 2.0.0 appears, all the 1.x line zips roll into `1.x.zip`, and so on for each major.
+4. After that the same pattern repeats. `1.0.x` rolls into `1.0.zip` when 1.1.0 appears. When 2.0.0 appears, all the 1.x line zips roll into `1.x.zip`, and each later major does the same.
 
 ## Pre-release builds
 
@@ -39,7 +39,7 @@ The folder after each release is published and the tool has run:
 | 1.1.0 | `pre-1.0.0.zip`, `1.0.zip`, `v1.1.0/` |
 | 2.0.0 | `pre-1.0.0.zip`, `1.x.zip`, `v2.0.0/` |
 
-Pre-release builds are not shown in the table. Publishing 0.2.0 also trashes `0.2.0-alpha.4`, `0.2.0-beta.1`, `0.2.0-rc.4`, `0.2.0-rc.5` and so on.
+Pre-release builds are not shown in the table. Publishing 0.2.0 also trashes every 0.2.0 pre-release build, such as `0.2.0-alpha.4`, `0.2.0-beta.1`, `0.2.0-rc.4` and `0.2.0-rc.5`.
 
 Publishing 0.2.0 is the moment the three-way `v0.1.x.zip` pile becomes `0.1.zip`: the new minor line is what triggers the merge. At 1.0.0 the old `0.1.zip`, `0.2.zip` and the single-release zips all fold into `pre-1.0.0.zip`, which then holds `v0.1.0/` through `v0.3.0/`.
 
