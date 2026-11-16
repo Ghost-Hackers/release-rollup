@@ -364,7 +364,7 @@ class RoundTrip(Base):
     def test_too_big_for_a_default_restore_stays_plain(self):
         for v in ('0.1.0', '0.1.1', '0.2.0'):
             release(self.root, v, app(v))
-        # The one patched limit in the suite: the real one is 64 GiB, and a real input that size would be
+        # The one patched limit in the suite: the shipped limit is 64 GiB, and an input that size would be
         # read, deflated and checked in full, which takes minutes and as much free disk.
         with mock.patch.object(core, 'DEFAULT_MAX_SIZE', 1000):
             self.run_apply()
@@ -1077,7 +1077,7 @@ class Hostile(Base):
         self.assertRefused(z, 'unpack to more', max_size=1 << 20)
 
     def test_manifest_size_cap(self):
-        # A real manifest one byte past the cap. Spaces are valid JSON padding and deflate to almost
+        # A manifest one byte past the cap. Spaces are valid JSON padding and deflate to almost
         # nothing, so the zip stays small; the size is refused before the manifest is read.
         z = self.rollup()
         with zipfile.ZipFile(z) as zf:

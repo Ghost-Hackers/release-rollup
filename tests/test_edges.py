@@ -74,7 +74,7 @@ class NoTrashCommand(TR.Base):
 
 
 class GioTrash(TR.Base):
-    """gio_trash runs the real command; these put a Python program named gio first on PATH."""
+    """gio_trash runs whichever gio comes first on PATH; these put a Python program named gio there."""
 
     def gio(self, code: str) -> None:
         """A gio that runs code, with the path to trash as its last argument."""

@@ -1,4 +1,4 @@
-# Lines and branches no real test can reach. Tab-separated:
+# Lines and branches no test can reach. Tab-separated:
 # file	line, or from->to for a branch	host (all, linux or windows)	the line's text, stripped	proof
 # For a branch the text is that of the "from" line. A negative "to" is coverage's exit from the function
 # starting at that line. tools/check_coverage.py checks this list.
