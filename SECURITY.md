@@ -27,3 +27,5 @@ cat rebuilt/SHA256SUMS
 ```
 
 0.1.0, 0.2.0-beta.1 and 0.2.0-beta.2 were built locally and only have `SHA256SUMS`, which names the zip as `assets/<zip>`. Compare the zip's sha256 with that line by hand.
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#security)

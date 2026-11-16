@@ -2,6 +2,21 @@
 
 The rules behind `run`, `pre`, `upgrade`, `archive` and `restore`. Options and exit codes are in [usage.md](usage.md).
 
+## Contents
+
+- [The rule](#the-rule)
+- [Pre-release builds](#pre-release-builds)
+- [Timeline](#timeline)
+- [What counts as published](#what-counts-as-published)
+- [Verification and safety](#verification-and-safety)
+- [Deduplicated rollups](#deduplicated-rollups)
+- [Upgrading plain rollups](#upgrading-plain-rollups)
+- [Archiving a folder of files](#archiving-a-folder-of-files)
+- [Names Windows cannot hold](#names-windows-cannot-hold)
+- [Running twice](#running-twice)
+- [Edge cases](#edge-cases)
+- [Tester builds and the pre command](#tester-builds-and-the-pre-command)
+
 ## The rule
 
 Releases live in one folder as `v<version>/` directories. The newest one stays a plain folder so it can be read and uploaded as is. Everything older is zipped, and the zips get coarser as they age.
@@ -9,9 +24,9 @@ Releases live in one folder as `v<version>/` directories. The newest one stays a
 With `--zip-newest` the newest release is zipped on its own as well (`v0.1.3.zip`), with the same check before the folder goes to the trash, so nothing stays unpacked. From then on it follows the same steps as every other release. A rerun finds the zip and does nothing.
 
 1. Every release except the newest is zipped on its own: `v0.1.3.zip`.
-2. When the first release of the next minor line appears, the zips of the old line merge into one zip named after the line: `0.1.zip`, holding `v0.1.0/`, `v0.1.1/` and so on. This also happens for a line with a single release.
+2. When the first release of the next minor line appears, the zips of the old line merge into one zip named after the line: `0.1.zip`, holding `v0.1.0/`, `v0.1.1/` and every other 0.1 release. This also happens for a line with a single release.
 3. When 1.0.0 appears, everything below it merges into `pre-1.0.0.zip`.
-4. After that the same pattern repeats. `1.0.x` rolls into `1.0.zip` when 1.1.0 appears. When 2.0.0 appears, all the 1.x line zips roll into `1.x.zip`, and so on for each major.
+4. After that the same pattern repeats. `1.0.x` rolls into `1.0.zip` when 1.1.0 appears. When 2.0.0 appears, all the 1.x line zips roll into `1.x.zip`, and each later major does the same.
 
 ## Pre-release builds
 
@@ -39,7 +54,7 @@ The folder after each release is published and the tool has run:
 | 1.1.0 | `pre-1.0.0.zip`, `1.0.zip`, `v1.1.0/` |
 | 2.0.0 | `pre-1.0.0.zip`, `1.x.zip`, `v2.0.0/` |
 
-Pre-release builds are not shown in the table. Publishing 0.2.0 also trashes `0.2.0-alpha.4`, `0.2.0-beta.1`, `0.2.0-rc.4`, `0.2.0-rc.5` and so on.
+Pre-release builds are not shown in the table. Publishing 0.2.0 also trashes every 0.2.0 pre-release build, such as `0.2.0-alpha.4`, `0.2.0-beta.1`, `0.2.0-rc.4` and `0.2.0-rc.5`.
 
 Publishing 0.2.0 is the moment the three-way `v0.1.x.zip` pile becomes `0.1.zip`: the new minor line is what triggers the merge. At 1.0.0 the old `0.1.zip`, `0.2.zip` and the single-release zips all fold into `pre-1.0.0.zip`, which then holds `v0.1.0/` through `v0.3.0/`.
 
@@ -161,3 +176,5 @@ Versions at or below a final current, or below the base of a pre-release current
 Zips are checked as in `run`: `testzip` and a sha256 comparison of every member with its source, before any source is trashed. If that fails the sources stay. A rollup zip that cannot be read, or that holds a top-level entry which is not a build of that version and stage, stops the run with nothing changed.
 
 Folders of another stage inside a stage folder, other names, and unknown stage folders such as `gamma/` are left alone. If someone unpacks a build from the zip again, the next run compares it with the zip and trashes the folder. A second run prints `nothing to do`.
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#how-it-works)

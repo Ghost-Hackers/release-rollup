@@ -2,6 +2,15 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## Contents
+
+- [Unreleased](#unreleased)
+- [0.2.0-beta.3 - 2026-11-14](#020-beta3---2026-11-14)
+- [0.1.1 - 2026-11-13](#011---2026-11-13)
+- [0.2.0-beta.2 - 2026-11-12](#020-beta2---2026-11-12)
+- [0.2.0-beta.1 - 2026-11-12](#020-beta1---2026-11-12)
+- [0.1.0 - 2026-11-12](#010---2026-11-12)
+
 ## [Unreleased]
 
 ## [0.2.0-beta.3] - 2026-11-14
@@ -85,3 +94,5 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - Safe to run twice, and to run after several releases landed at once.
 - `release-rollup pre` command for a project's `prereleases/` folder (`alpha/`, `beta/`, `rc/`). Older tester builds of a version are zipped into `v<x.y.z>-<stage>.x.zip` after the usual verification. The newest finished build of each stage stays unpacked while its version is unreleased. Options: `--root`, `--current`, `--dry-run`, `--marker`, `--trash-dir`.
 - Counts and sizes in the output use thousands separators.
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#changelog)

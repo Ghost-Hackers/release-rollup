@@ -2,6 +2,11 @@
 
 Commands that work, and behavior worth knowing before you change something.
 
+## Contents
+
+- [Commands](#commands)
+- [Behavior](#behavior)
+
 ## Commands
 
 Run the tests:
@@ -101,3 +106,5 @@ General:
 - `upgrade` leaves `.<zip>.upgrade-old` next to a zip when a run dies between the rename and the trash. The next `upgrade` trashes it once the zip in place proves all its files.
 - A reader that doesn't want this package as a dependency can read `.rollup/MANIFEST.json` with the standard library. The file list is `files[].path`. The bytes are a blob, or a skeleton plus blobs, proved by the `sha256` of the entry.
 - `tools/check_release.py changelog` compares the `## [Unreleased]` entry lines against the merge base. A line that replaces an old one counts as a rewording, so a change needs more entries than it removes.
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#facts)
