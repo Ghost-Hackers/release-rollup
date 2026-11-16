@@ -1,4 +1,4 @@
-"""tools/check_release.py on real temp folders and temp git repositories."""
+"""tools/check_release.py on temp folders and temp git repositories."""
 import importlib.util
 import os
 import shutil

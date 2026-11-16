@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the unit tests under coverage.py, checks the coverage and byte-compiles the package.
 #
-# Some tests fill a real disk and need RR_SMALLFS, a folder on a small filesystem (see tests/smallfs.py).
+# Some tests fill the disk they write to and need RR_SMALLFS, a folder on a small filesystem (see tests/smallfs.py).
 # CI sets it. On Linux, when it isn't set, this script runs itself again in a private mount namespace
 # with a 4 MB tmpfs mounted there. No root needed, and the mount goes away with the namespace.
 # Elsewhere (Git Bash on Windows) set RR_SMALLFS yourself, or those tests fail and say how.

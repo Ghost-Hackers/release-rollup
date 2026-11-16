@@ -1,4 +1,4 @@
-"""hosts.tsv names real tests, each once, with a known host, and every test module filters by it."""
+"""hosts.tsv names tests that exist, each once, with a known host, and every test module filters by it."""
 import glob
 import importlib
 import os

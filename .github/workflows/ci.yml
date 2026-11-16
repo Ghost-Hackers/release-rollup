@@ -45,7 +45,7 @@ jobs:
       - name: Install coverage.py
         run: python -m pip install coverage==7.17.3
 
-      # Some tests fill a real disk (tests/smallfs.py). They need RR_SMALLFS, a folder on a
+      # Some tests fill the disk they write to (tests/smallfs.py). They need RR_SMALLFS, a folder on a
       # filesystem of a few MB, and fail without it. Both steps below export it for the later steps.
       - name: Make a small filesystem for the disk-full tests (Linux)
         if: runner.os == 'Linux'

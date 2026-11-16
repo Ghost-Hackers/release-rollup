@@ -17,7 +17,7 @@ from io import FileIO
 
 ENV = 'RR_SMALLFS'
 LIMIT = 64 << 20
-HOWTO = ('%s is not set. This test fills a real disk, so it needs a folder on a filesystem of a few MB. '
+HOWTO = ('%s is not set. This test fills the disk it writes to, so it needs a folder on a filesystem of a few MB. '
          'Run the tests through tools/check.sh (on Linux it makes one itself), or mount a small filesystem '
          '(Linux: tmpfs with size=4m; Windows: a fixed VHD of 8 MB formatted NTFS) and set %s to a folder on it.'
          % (ENV, ENV))
