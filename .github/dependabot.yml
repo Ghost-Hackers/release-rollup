@@ -9,6 +9,7 @@ updates:
     # Synced files check fails on any edit made here.
     exclude-paths:
       - .github/workflows/claude*.yml
+      # Not here yet: it comes from ci-workflows with the next sync, and its name doesn't match claude*.
       - .github/workflows/review-retarget.yml
     labels:
       - no changelog
