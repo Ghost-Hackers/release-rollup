@@ -1,0 +1,18 @@
+# Update pull requests for the actions the workflows use. The package itself has no dependencies.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Copies from Ghost-Hackers/ci-workflows. Their pins are updated there and synced, and the
+    # Synced files check fails on any edit made here.
+    exclude-paths:
+      - .github/workflows/claude*.yml
+      # Not here yet: it comes from ci-workflows with the next sync, and its name doesn't match claude*.
+      - .github/workflows/review-retarget.yml
+    labels:
+      - no changelog
+      - "area: ci"
+    commit-message:
+      prefix: Update
