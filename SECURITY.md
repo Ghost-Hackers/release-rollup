@@ -1,8 +1,10 @@
 # Security
 
-If you find a security problem in release-rollup, report it privately: open the repository's **Security** tab on GitHub and choose **Report a vulnerability**. Please don't open a public issue for it.
+If you find a security problem in release-rollup, report it privately through [Report a vulnerability](https://github.com/Ghost-Hackers/release-rollup/security/advisories/new) on the repository's **Security** tab. Please don't open a public issue for it.
 
-Tell us which version you used, your system and Python version, and the steps or files that show the problem.
+[![Report a vulnerability](https://img.shields.io/badge/Report%20a%20vulnerability-d1242f?style=plastic&logo=github)](https://github.com/Ghost-Hackers/release-rollup/security/advisories/new)
+
+The form asks for a title, a description, the affected versions and, if you can judge it, a severity. In the description, say which version you used, your system and Python version, and the steps or files that show the problem.
 
 Fixes go into the latest release and the latest pre-release.
 
