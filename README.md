@@ -27,6 +27,16 @@ releases/
   v0.2.0/
 ```
 
+## Contents
+
+- [Requirements](#requirements)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Documentation](#documentation)
+- [Development](#development)
+- [License](#license)
+
 ## Requirements
 
 Python 3.14 or later and the standard library, nothing else. Tested on Linux and on Windows 11 (Git Bash for the shell scripts). On Windows `python3` is the Microsoft Store shortcut, so use `py -3.14`. There is no `gio` there either, so pass `--trash-dir` to say where replaced files go.
@@ -105,3 +115,5 @@ It prints one PASS or FAIL line per check and exits 0 only when none failed. `--
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE). Copies and changed versions have to keep the license and the credit in [NOTICE](NOTICE).
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#release-rollup)

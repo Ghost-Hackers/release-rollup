@@ -2,6 +2,17 @@
 
 `run` works on a releases folder, `pre` on a prereleases folder, `upgrade` converts older rollups, `archive` rolls up a folder of plain files and `restore` gets the original files back. `release-rollup --version` prints the version.
 
+## Contents
+
+- [run](#run)
+- [pre](#pre)
+- [Deduplicated rollups](#deduplicated-rollups)
+- [restore](#restore)
+- [upgrade](#upgrade)
+- [archive](#archive)
+- [Example](#example)
+- [Exit codes](#exit-codes)
+
 ## run
 
 ```sh
@@ -196,3 +207,5 @@ Run it again and it prints `nothing to do`.
 | 0 | Done, or nothing to do |
 | 1 | A zip failed its check, an existing archive could not be read, a file name was refused (Windows names, or one the system cannot open), a `restore` was refused, an `upgrade` refused a zip, or there is no way to trash files. Sources are left in place |
 | 2 | Bad command line, or `--root` is not a folder |
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#usage)

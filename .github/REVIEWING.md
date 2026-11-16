@@ -2,6 +2,13 @@
 
 What a change to release-rollup has to meet before it merges.
 
+## Contents
+
+- [Safety](#safety)
+- [Tests](#tests)
+- [Changes](#changes)
+- [Writing](#writing)
+
 ## Safety
 
 release-rollup zips users' release folders and moves the originals to the trash. A change must never lose a file: every zip is checked against its sources before anything is trashed, and a run that can't finish leaves the folder as it was.
@@ -24,3 +31,5 @@ Paths from zips, manifests and arguments stay inside the folder given. `..`, abs
 ## Writing
 
 Comments, docs, commit messages and pull request text read like a developer wrote them: short and plain, saying what the code does or why. No em dashes or emoji, no openers that announce and no closing summaries. Words to leave out: seamless, robust, comprehensive, leverage, utilize, ensure, streamline, delve, crucial, essential, facilitate, enhance, showcase, various. Tests are described by what they check, never as real or not.
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#reviewing)

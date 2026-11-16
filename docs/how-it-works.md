@@ -2,6 +2,21 @@
 
 The rules behind `run`, `pre`, `upgrade`, `archive` and `restore`. Options and exit codes are in [usage.md](usage.md).
 
+## Contents
+
+- [The rule](#the-rule)
+- [Pre-release builds](#pre-release-builds)
+- [Timeline](#timeline)
+- [What counts as published](#what-counts-as-published)
+- [Verification and safety](#verification-and-safety)
+- [Deduplicated rollups](#deduplicated-rollups)
+- [Upgrading plain rollups](#upgrading-plain-rollups)
+- [Archiving a folder of files](#archiving-a-folder-of-files)
+- [Names Windows cannot hold](#names-windows-cannot-hold)
+- [Running twice](#running-twice)
+- [Edge cases](#edge-cases)
+- [Tester builds and the pre command](#tester-builds-and-the-pre-command)
+
 ## The rule
 
 Releases live in one folder as `v<version>/` directories. The newest one stays a plain folder so it can be read and uploaded as is. Everything older is zipped, and the zips get coarser as they age.
@@ -161,3 +176,5 @@ Versions at or below a final current, or below the base of a pre-release current
 Zips are checked as in `run`: `testzip` and a sha256 comparison of every member with its source, before any source is trashed. If that fails the sources stay. A rollup zip that cannot be read, or that holds a top-level entry which is not a build of that version and stage, stops the run with nothing changed.
 
 Folders of another stage inside a stage folder, other names, and unknown stage folders such as `gamma/` are left alone. If someone unpacks a build from the zip again, the next run compares it with the zip and trashes the folder. A second run prints `nothing to do`.
+
+[![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#how-it-works)
