@@ -18,9 +18,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - name: Check out the commit with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether the change is docs only
+        id: diff
+        # The tests skip when every changed file is Markdown or under docs/, except CHANGELOG.md,
+        # which ships in the release zip and is checked there. Pushes to master and an empty or
+        # unreadable diff always run them.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          code=true
+          if [ "$EVENT" = pull_request ]; then
+            base=$PR_BASE
+          elif [ "$REF" != refs/heads/master ]; then
+            base=$(git merge-base origin/master HEAD) || base=
+          else
+            base=
+          fi
+          if [ -n "$base" ] && git diff --quiet --no-renames "$base" HEAD -- ':!*.md' ':!docs/' \
+             && git diff --quiet --no-renames "$base" HEAD -- CHANGELOG.md \
+             && ! git diff --quiet --no-renames "$base" HEAD; then
+            code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Base ${base:-none}, code changed: $code"
+
   test:
     name: Tests (${{ matrix.os }})
+    needs: changes
+    # A skipped matrix job reports as "Tests (${{ matrix.os }})" and the required checks never
+    # arrive, so on a docs-only change the steps skip instead. Runs if "Changed files" failed.
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,25 +74,29 @@ jobs:
         shell: bash
     steps:
       - name: Check out the commit
+        if: env.CODE != 'false'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
+        if: env.CODE != 'false'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
       - name: Show the Python version
+        if: env.CODE != 'false'
         run: python --version
 
       - name: Install coverage.py
+        if: env.CODE != 'false'
         run: python -m pip install coverage==7.17.3
 
       # Some tests fill the disk they write to (tests/smallfs.py). They need RR_SMALLFS, a folder on a
       # filesystem of a few MB, and fail without it. Both steps below export it for the later steps.
       - name: Make a small filesystem for the disk-full tests (Linux)
-        if: runner.os == 'Linux'
+        if: env.CODE != 'false' && runner.os == 'Linux'
         run: |
           mkdir -p "$RUNNER_TEMP/small"
           sudo mount -t tmpfs -o size=4m,mode=1777 tmpfs "$RUNNER_TEMP/small"
@@ -58,7 +106,7 @@ jobs:
       - name: Make a small filesystem for the disk-full tests (Windows)
         # An 8 MB fixed VHD, formatted NTFS and given drive S:. The runner is an administrator,
         # which diskpart needs.
-        if: runner.os == 'Windows'
+        if: env.CODE != 'false' && runner.os == 'Windows'
         shell: pwsh
         run: |
           $vhd = Join-Path $env:RUNNER_TEMP 'small.vhd'
@@ -80,7 +128,7 @@ jobs:
       - name: Make a filesystem without hard links (Windows)
         # 64 MB FAT32 drive T:. FAT has no hard links, so NoHardLinks in tests/test_edges.py
         # tests the copy fallback.
-        if: runner.os == 'Windows'
+        if: env.CODE != 'false' && runner.os == 'Windows'
         shell: pwsh
         run: |
           $vhd = Join-Path $env:RUNNER_TEMP 'nolinks.vhd'
@@ -100,6 +148,7 @@ jobs:
           "RR_NOLINKS_FS=T:\tests" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Run the unit tests
+        if: env.CODE != 'false'
         # The summary must be a bare OK. "OK (skipped=N)" fails the job: every test
         # has to run on both systems. Output from the tests can follow the summary,
         # so this looks for the summary line anywhere instead of only the last line.
@@ -115,15 +164,18 @@ jobs:
           fi
 
       - name: Run check.sh
+        if: env.CODE != 'false'
         run: PY=python bash tools/check.sh 2>&1 | tee logs/check.log
 
       - name: Build the release zip from this commit
+        if: env.CODE != 'false'
         run: |
           V=$(cat VERSION)
           mkdir -p dist
           git archive --prefix=release-rollup-$V/ -o dist/release-rollup-$V.zip HEAD
 
       - name: Download the newest 0.1.x release zip
+        if: env.CODE != 'false'
         # For the --cross check below. Forks have no releases, so always fetch from upstream.
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,16 +189,19 @@ jobs:
           echo "OLD_ZIP=old/release-rollup-${tag#v}.zip" >> "$GITHUB_ENV"
 
       - name: Run the end-to-end checks
+        if: env.CODE != 'false'
         run: |
           V=$(cat VERSION)
           PY=python bash tools/e2e.sh dist/release-rollup-$V.zip 2>&1 | tee logs/e2e.log
 
       - name: Run the end-to-end checks against the newest 0.1.x
+        if: env.CODE != 'false'
         run: |
           V=$(cat VERSION)
           PY=python bash tools/e2e.sh dist/release-rollup-$V.zip --cross "$OLD_ZIP" 2>&1 | tee logs/e2e-cross.log
 
       - name: Run the end-to-end self-check
+        if: env.CODE != 'false'
         # Proves the e2e script fails on a zip with one changed byte.
         run: |
           V=$(cat VERSION)
@@ -162,6 +217,9 @@ jobs:
 
   types:
     name: Pyright strict
+    needs: changes
+    # Skips on a docs-only change. Runs if "Changed files" failed.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the commit
