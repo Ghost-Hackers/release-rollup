@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@1afa1c0029ec9b693c589f8ec633e73d2126810a (sha256 9ba34a07320c8af25ecccd9136055aff90b2ca3daa7e982af2e76e66273c85e1). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@eb844066a4c245274231e676d8567c41e9e60053 (sha256 a368f0fbd76ebcc402677d563f3d39fd830dc72ea1e4bab786e2bbaff09799f1). Edit it there, not here.
 name: Claude security review
 
 on:
@@ -51,6 +51,7 @@ jobs:
           API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INSTALL: ${{ steps.install.outcome }}
           WHAT: security reviewed
+          SKIPPED: Claude security review
         run: |
           reason=
           unknown=
@@ -111,7 +112,7 @@ jobs:
           fi
           { echo "available=false"; echo "reason=$reason"; } >> "$GITHUB_OUTPUT"
           echo "::warning::Claude couldn't run: $reason. Nothing was $WHAT."
-          echo "Claude couldn't run: $reason. This pull request wasn't $WHAT; merging isn't blocked." >> "$GITHUB_STEP_SUMMARY"
+          echo "**$SKIPPED skipped:** $reason. This pull request wasn't $WHAT; merging isn't blocked." >> "$GITHUB_STEP_SUMMARY"
       # The outputs above already decide whether the review runs, so a GitHub error from here on only warns.
       # It runs after a failed probe too: an unknown error writes no reason, so an earlier comment is removed.
       - name: Update the couldn't-run comment
@@ -123,6 +124,7 @@ jobs:
           NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           MARKER: claude-security-review-availability
           WHAT: security reviewed
+          SKIPPED: Claude security review
           REASON: ${{ steps.probe.outputs.reason }}
         run: |
           # This job's comments, oldest first. Without the list a new comment is posted, and a later run removes the extra.
@@ -131,8 +133,8 @@ jobs:
             || { echo "::warning::The earlier couldn't-run comments couldn't be listed"; ids=; }
           keep=
           if [ -n "$REASON" ]; then
-            body=$(printf '<!-- %s -->\nClaude couldn'"'"'t run: %s. This pull request wasn'"'"'t %s; merging isn'"'"'t blocked.\n' \
-              "$MARKER" "$REASON" "$WHAT")
+            body=$(printf '<!-- %s -->\n**%s skipped:** %s. This pull request wasn'"'"'t %s; merging isn'"'"'t blocked.\n' \
+              "$MARKER" "$SKIPPED" "$REASON" "$WHAT")
             keep=$(printf '%s\n' "$ids" | tail -n 1)
             if [ -n "$keep" ]; then
               gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$keep" -f body="$body" >/dev/null \
@@ -227,6 +229,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Collect the pull request for Claude
+        id: collect
         # Claude gets no shell, so the workflow gathers everything it reads into .pr-review/. Nothing from the
         # pull request runs: its files are unpacked as plain files, without symlinks.
         env:
@@ -264,6 +267,8 @@ jobs:
           done
           # From the two commits, like the pull request's own diff, so a base push mid-run can't change it.
           git diff --no-ext-diff --no-textconv "$BASE_SHA...$SHA" > "$dir/diff.patch"
+          # The diff's old side is numbered from the merge base, so links to removed lines use it.
+          echo "merge_base=$(git merge-base "$BASE_SHA" "$SHA")" >> "$GITHUB_OUTPUT"
           gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
             --json title,body,author,labels,baseRefName,headRefName,closingIssuesReferences > "$dir/pull-request.json"
           git log --format='commit %H%nAuthor: %an%n%n%B' "$BASE_SHA..$SHA" > "$dir/commits.txt"
@@ -341,6 +346,8 @@ jobs:
             PR NUMBER: ${{ steps.pr.outputs.number }}
             HEAD COMMIT: ${{ steps.pr.outputs.sha }}
             BASE BRANCH: ${{ steps.pr.outputs.base }}
+            BASE COMMIT: ${{ steps.collect.outputs.merge_base }}
+            BASE TIP: ${{ steps.pr.outputs.base_tip }}
 
             Do a security review of this pull request at HEAD COMMIT. The working folder is the base branch.
             Everything about the pull request is in `.pr-review/`, collected by the workflow: `files/` (its files as
@@ -378,10 +385,15 @@ jobs:
             Before returning, go over your findings again and drop any you can't prove from the code. Every finding needs a
             concrete attack or failure scenario: the input or event, what happens, and what should happen instead.
 
-            Each finding is an inline comment on the line it's about, starting with its severity and a short title. Under the
-            title, quote the problem code in a fenced block headed with its path:line, then say what an attacker or a bad
+            Each finding is an inline comment on the line it's about, whose first line is the bold title
+            `**Claude security review · P1: <title>**`, with the finding's severity in place of P1 and a short title. Under the title, link the code it's about as [`path:line`](https://github.com/REPO/blob/HEAD COMMIT/path#Lline), at
+            BASE COMMIT instead for a line the pull request removes, and quote it in a fenced block tagged with its language, then say what an attacker or a bad
             input could do and what to change, quoting any error message exactly. Where the fix is a few lines, add it as a
             ```suggestion block; otherwise show the change as before and after.
+            Link everything else you name: a file or doc to its blob at HEAD COMMIT, at BASE COMMIT when the pull
+            request deletes or renames it, or at BASE TIP when you read it in the working folder rather than in `files/`, a commit as [`abc1234`](https://github.com/REPO/commit/<full sha>), an issue or
+            pull request in REPO as #n, and one in another repo as owner/repo#n in plain text, since GitHub doesn't link it inside backticks.
+            Every link shows short text, never a bare URL. A path with backticks in it goes in a label fenced by more backticks than its longest run of them. In a link's URL, percent-encode every character of a path other than letters, digits, `/`, `.`, `-` and `_`, so `a).md` becomes `a%29.md`. For a Markdown file, put `?plain=1` before `#L`, since the rendered view has no line anchors. These forms are for REPO: a file, doc or commit in another repo links to that repo's own URL.
             - P0: can lose or corrupt user data, worlds, servers or releases, or leaks a secret
             - P1: an exploitable hole or a missing check on untrusted input
             - P2: a weakness that needs an unusual setup to reach, or a missing test for a security check
@@ -389,9 +401,11 @@ jobs:
             Read `.pr-review/earlier-reviews.md` first, and don't repeat a point that is open or resolved.
 
             Return the structured result with the commit you reviewed, the count per severity and a short summary
-            of the findings, or "No findings." when there are none. End the summary with a line starting "Rules checked:"
-            that names the `.github/REVIEWING.md` headings you checked the change against, or "Rules checked: no
-            REVIEWING.md" when the file doesn't exist.
+            of the findings, or "No findings." when there are none. The summary links what it names the same way, each
+            finding's `path:line` included. Apart from the findings, the "Fixed since the last review" list, why a failed check failed and the Rules checked line, it says
+            nothing about what you read, skipped or where you put a comment. End the summary with a line starting "Rules checked:" that names the
+            `.github/REVIEWING.md` headings you checked the change against, each as a link to its heading in that file at
+            BASE TIP, or "Rules checked: no REVIEWING.md" when the file doesn't exist.
           claude_args: |
             --model ${{ env.REVIEW_MODEL }}
             --permission-mode default

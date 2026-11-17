@@ -1,0 +1,68 @@
+# Copied from Ghost-Hackers/ci-workflows@eb844066a4c245274231e676d8567c41e9e60053 (sha256 94bde451252f479ca91f8aba466b25fb0dbc9d7d2204839a9b0aafc17992f0cf). Edit it there, not here.
+name: Changed files
+
+on:
+  workflow_call:
+    inputs:
+      docs-patterns:
+        description: Git pathspecs for files that don't need the tests, separated by spaces
+        type: string
+        default: "*.md docs/"
+    outputs:
+      code:
+        description: "false when the change only touches docs, otherwise true"
+        value: ${{ jobs.changes.outputs.code }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        name: Check whether code changed
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          DOCS: ${{ inputs.docs-patterns }}
+        run: |
+          # Anything unclear counts as code, so the tests still run.
+          code=true
+          base=
+          case "$EVENT" in
+            pull_request) base=$PR_BASE ;;
+            pull_request_target)
+              # Its checkout is the base branch, not the pull request, so there's nothing to compare.
+              echo "::notice::Under pull_request_target the checkout isn't the pull request, so the tests run." ;;
+            *)
+              if [ -n "$DEFAULT_BRANCH" ] && [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+                base=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD) || base=
+              fi ;;
+          esac
+          set -f # the patterns are pathspecs, not shell globs
+          excludes=()
+          for pattern in $DOCS; do
+            case "$pattern" in
+              # Long magic keeps its own words: :(glob)docs/** becomes :(exclude,glob)docs/**.
+              ":("*")"*) excludes+=(":(exclude,${pattern#:(}") ;;
+              # Short magic like :/ can't be combined with exclude, so the answer stays code.
+              :*) echo "::warning::The pattern $pattern uses short pathspec magic; write it as :(top) and the like."
+                  excludes=(); break ;;
+              *) excludes+=(":(exclude)$pattern") ;;
+            esac
+          done
+          if [ -n "$base" ] && [ ${#excludes[@]} -gt 0 ] && git cat-file -e "$base^{commit}" \
+             && git diff --quiet --no-renames "$base" HEAD -- "${excludes[@]}" \
+             && ! git diff --quiet --no-renames "$base" HEAD; then
+            code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
