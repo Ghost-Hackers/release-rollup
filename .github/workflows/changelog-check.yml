@@ -1,0 +1,23 @@
+name: Changelog check
+
+# On its own: the check re-runs older runs of its workflow on the same pull request, whole runs,
+# so it must not share a workflow with other checks.
+on:
+  # Label changes run the check again, and edited covers a pull request moved to another base
+  # branch. No concurrency group: a cancelled run of a required check blocks the merge.
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Changelog
+    # A change under src/ needs a line under "## [Unreleased]" unless the pull request has the
+    # "no changelog" label. The check itself is ci-workflows' changelog.yml.
+    uses: ./.github/workflows/changelog.yml
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write
