@@ -1,15 +1,14 @@
 """Release checks that run locally and in the release-check workflow.
 
     python tools/check_release.py versions [--tag vX.Y.Z]
-    python tools/check_release.py changelog --base REF --head REF
 
 "versions" checks that the version strings agree and that CHANGELOG.md has a heading for the version.
-"changelog" checks that a change under src/ comes with a new entry under "## [Unreleased]".
+The changelog entry for a change under src/ is checked by changelog-check.yml, which calls the shared
+changelog.yml from ci-workflows.
 """
 import argparse
 import os
 import re
-import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -76,78 +75,17 @@ def check_versions(root: str, tag: str | None = None) -> list[str]:
     return problems
 
 
-def _git(root: str, *args: str) -> subprocess.CompletedProcess[str]:
-    # surrogateescape keeps a file name that isn't valid UTF-8 (possible on Linux) instead of failing on it.
-    return subprocess.run(['git', '-C', root, *args], capture_output=True, text=True, encoding='utf-8',
-                          errors='surrogateescape')
-
-
-def unreleased_entries(changelog: str) -> list[str]:
-    """The entry lines ("- ..." or "* ...") between "## [Unreleased]" and the next "## " heading."""
-    entries: list[str] = []
-    inside = False
-    for line in changelog.splitlines():
-        if line.startswith('## '):
-            inside = line.strip().lower() == '## [unreleased]'
-        elif inside and re.match(r'\s*[-*] \S', line):
-            entries.append(' '.join(line.split()))
-    return entries
-
-
-def check_changelog(root: str, base: str, head: str) -> list[str]:
-    merge_base = _git(root, 'merge-base', base, head)
-    start = merge_base.stdout.strip() if merge_base.returncode == 0 else base
-    # --no-renames lists both paths of a moved file, so a file moved out of src/ still counts.
-    # -z gives the names as they are: without it git quotes a name like src/café.py, and the
-    # quoted form doesn't start with src/.
-    diff = _git(root, 'diff', '--name-only', '--no-renames', '-z', start, head)
-    if diff.returncode != 0:
-        return [f'git diff {start} {head} failed: {diff.stderr.strip()}']
-    changed = [p for p in diff.stdout.split('\0') if p.startswith('src/')]
-    if not changed:
-        return []
-
-    def entries(ref: str) -> list[str] | None:
-        shown = _git(root, 'show', f'{ref}:CHANGELOG.md')
-        return unreleased_entries(shown.stdout) if shown.returncode == 0 else None
-
-    new = entries(head)
-    if new is None:
-        return [f'CHANGELOG.md does not exist at {head}']
-    old = entries(start) or []
-    added = list(new)
-    for line in old:
-        if line in added:
-            added.remove(line)
-    gone = len(old) - (len(new) - len(added))
-    # A line that replaces an old one is a rewording, so it only counts when it adds to the total.
-    if len(added) > gone:
-        return []
-    # Bytes that aren't UTF-8 show as \xff and the like, so printing the message can't fail.
-    names = [p.encode('utf-8', 'surrogateescape').decode('utf-8', 'backslashreplace') for p in changed[:3]]
-    shown = ', '.join(names) + (f' and {len(changed) - 3} more' if len(changed) > 3 else '')
-    return [f'{shown} changed under src/, but "## [Unreleased]" in CHANGELOG.md has no new entry. '
-            'Add one, or put the "no changelog" label on the pull request if users won\'t notice the change.']
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description='Release checks for the changelog and version numbers.')
+    parser = argparse.ArgumentParser(description='Release checks for the version numbers.')
     parser.add_argument('--root', default=ROOT, help='repository folder (default: this one)')
     sub = parser.add_subparsers(dest='command', required=True)
     v = sub.add_parser('versions', help='version strings agree and the changelog has the version')
     v.add_argument('--tag', help='a release tag such as v0.2.0, which must match VERSION')
-    c = sub.add_parser('changelog', help='a change under src/ adds an Unreleased entry')
-    c.add_argument('--base', required=True)
-    c.add_argument('--head', required=True)
     args = parser.parse_args(argv)
 
     root: str = args.root
-    if args.command == 'versions':
-        problems = check_versions(root, args.tag)
-        ok = 'versions ok'
-    else:
-        problems = check_changelog(root, args.base, args.head)
-        ok = 'changelog ok'
+    problems = check_versions(root, args.tag)
+    ok = 'versions ok'
     for p in problems:
         print(p)
     if problems:
