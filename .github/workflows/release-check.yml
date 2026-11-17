@@ -19,11 +19,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    # Opening a pull request with a label starts a run for "opened" and one for "labeled".
-    # The newer run replaces the older one, so only one result shows.
-    concurrency:
-      group: changelog-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
     steps:
       - name: Check out the pull request with its history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,12 +34,19 @@ jobs:
       - name: Read the labels
         id: labels
         # From the API, not the event: the "opened" event can come before the labels it was
-        # opened with are added.
+        # opened with are added. Opening with a label also starts a run for "labeled", and a
+        # failed or cancelled run of a required check blocks the merge even when a newer one
+        # passed, so the "opened" run gives the labels 20 seconds to arrive.
         env:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
         run: |
           labels=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
+          if [ "$ACTION" = opened ] && [ -z "$labels" ]; then
+            sleep 20
+            labels=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
+          fi
           if grep -qxF 'no changelog' <<<"$labels"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
