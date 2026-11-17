@@ -87,22 +87,29 @@ jobs:
           # first. The list is read into a variable: grep -q on a pipe could stop gh early, and under
           # pipefail that would end the wait too soon.
           others=
-          listed=false
+          last_ok=false
+          busy=false
           for _ in $(seq 1 12); do
             if others=$(list); then
-              listed=true
+              last_ok=true
               if [ -z "$others" ] || ! grep -qv ' completed ' <<<"$others"; then
+                busy=false
                 break
               fi
+              busy=true
             else
+              last_ok=false
               others=
               echo "Couldn't list the runs on ${SHA:0:7}, trying again"
             fi
             sleep 10
           done
-          if [ "$listed" = false ]; then
+          if [ "$last_ok" = false ]; then
             echo "::warning::Couldn't list the runs on ${SHA:0:7}. Re-run any failed or cancelled Changelog entry run from the Actions tab."
             exit 0
+          fi
+          if [ "$busy" = true ]; then
+            echo "::warning::A Changelog entry run on ${SHA:0:7} is still going. If it fails, re-run it from the Actions tab."
           fi
           [ -n "$others" ] || exit 0
           # The whole run: --failed leaves cancelled jobs as they are.
