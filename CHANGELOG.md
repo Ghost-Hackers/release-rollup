@@ -95,4 +95,11 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - `release-rollup pre` command for a project's `prereleases/` folder (`alpha/`, `beta/`, `rc/`). Older tester builds of a version are zipped into `v<x.y.z>-<stage>.x.zip` after the usual verification. The newest finished build of each stage stays unpacked while its version is unreleased. Options: `--root`, `--current`, `--dry-run`, `--marker`, `--trash-dir`.
 - Counts and sizes in the output use thousands separators.
 
+[Unreleased]: https://github.com/Ghost-Hackers/release-rollup/compare/v0.2.0-beta.3...HEAD
+[0.2.0-beta.3]: https://github.com/Ghost-Hackers/release-rollup/releases/tag/v0.2.0-beta.3
+[0.1.1]: https://github.com/Ghost-Hackers/release-rollup/releases/tag/v0.1.1
+[0.2.0-beta.2]: https://github.com/Ghost-Hackers/release-rollup/releases/tag/v0.2.0-beta.2
+[0.2.0-beta.1]: https://github.com/Ghost-Hackers/release-rollup/releases/tag/v0.2.0-beta.1
+[0.1.0]: https://github.com/Ghost-Hackers/release-rollup/releases/tag/v0.1.0
+
 [![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#changelog)
