@@ -6,8 +6,6 @@ on:
   push:
     branches: ['**']
   pull_request:
-    # edited covers a pull request moved to another base branch.
-    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -16,16 +14,12 @@ concurrency:
   # A pull request's runs share one group, so a newer push cancels the older run.
   # Every other run gets a group of its own: GitHub keeps only one pending run per
   # group and drops the rest, which would lose results for quick pushes to master.
-  # An "edited" run is on the same commit as the run before it, and a cancelled run
-  # of a required check blocks the merge, so it gets its own group too.
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.action != 'edited' && github.ref || github.run_id }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Changed files
-    # "edited" also fires for title and description changes. Only a new base needs the check again.
-    if: github.event.action != 'edited' || github.event.changes.base
     uses: ./.github/workflows/changed-files.yml
 
   test:
@@ -36,8 +30,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     env:
-      # A title or description edit skips "Changed files" and needs no tests.
-      CODE: ${{ (github.event.action == 'edited' && !github.event.changes.base) && 'false' || needs.changes.outputs.code }}
+      CODE: ${{ needs.changes.outputs.code }}
     strategy:
       fail-fast: false
       matrix:
@@ -191,8 +184,8 @@ jobs:
   types:
     name: Pyright strict
     needs: changes
-    # Skips on a docs-only change and on a title or description edit. Runs if "Changed files" failed.
-    if: ${{ !cancelled() && (github.event.action != 'edited' || github.event.changes.base) && needs.changes.outputs.code != 'false' }}
+    # Skips on a docs-only change. Runs if "Changed files" failed.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the commit
