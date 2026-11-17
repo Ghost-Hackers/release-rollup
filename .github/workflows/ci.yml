@@ -32,9 +32,8 @@ jobs:
 
       - name: Decide whether the change is docs only
         id: diff
-        # The tests skip when every changed file is Markdown or under docs/, except CHANGELOG.md,
-        # which ships in the release zip and is checked there. Pushes to master and an empty or
-        # unreadable diff always run them.
+        # Skip the tests when every changed file is Markdown or under docs/.
+        # Pushes to master and an empty or unreadable diff always run them.
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
@@ -49,7 +48,6 @@ jobs:
             base=
           fi
           if [ -n "$base" ] && git diff --quiet --no-renames "$base" HEAD -- ':!*.md' ':!docs/' \
-             && git diff --quiet --no-renames "$base" HEAD -- CHANGELOG.md \
              && ! git diff --quiet --no-renames "$base" HEAD; then
             code=false
           fi
