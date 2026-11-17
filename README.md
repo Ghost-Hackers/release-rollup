@@ -99,7 +99,7 @@ runs the unit tests under coverage.py, fails unless every line and branch is cov
 
 Some tests fill a disk. On Linux `check.sh` mounts a 4 MB tmpfs for them in a private namespace, no root needed. On Windows, set `RR_SMALLFS` to a folder on a drive of a few MB and `RR_NOLINKS_FS` to one on a FAT32 drive before running it; CI makes both. Run it as a normal user: root ignores file permissions, so the tests that lock files can't work. On Windows use `PY="py -3.14" bash tools/check.sh` from Git Bash.
 
-`tools/check_release.py` checks that the version numbers agree (`versions`) and that a change under `src/` adds a line under `[Unreleased]` in the changelog (`changelog --base REF --head REF`). The release-check workflow runs both on pull requests and on version tags. A pull request that users won't notice can carry the `no changelog` label.
+`tools/check_release.py versions` checks that the version numbers agree and that `CHANGELOG.md` has a heading for the version. The release-check workflow runs it on pull requests and on version tags. A change under `src/` needs a line under `[Unreleased]` in the changelog, which `changelog-check.yml` checks with the shared `changelog.yml` from ci-workflows. A pull request that users won't notice can carry the `no changelog` label.
 
 CI skips the tests and Pyright on a pull request that only changes Markdown files or files under `docs/`. The Claude review, the changelog check and CodeQL still run.
 

@@ -1,10 +1,9 @@
 name: Release check
 
 on:
-  # The pull request job always runs so it can be a required check. It passes by itself
-  # when the pull request carries the "no changelog" label, so label changes rerun it.
+  # The pull request job always runs so it can be a required check. The changelog check has its
+  # own workflow, changelog-check.yml.
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     tags: ["v*"]
 
@@ -12,20 +11,15 @@ permissions:
   contents: read
 
 jobs:
-  changelog:
-    name: Changelog entry
+  versions:
+    name: Version numbers
+    # VERSION, pyproject.toml and the CHANGELOG.md heading for the version have to agree.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-      # For re-running an earlier failed run of this check, see the last step.
-      actions: write
     steps:
-      - name: Check out the pull request with its history
+      - name: Check out the pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -33,93 +27,8 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Check the changelog entry
-        # A change under src/ needs a new line under "## [Unreleased]" unless the pull request
-        # has the "no changelog" label. The labels come from the API, not the event: a pull
-        # request opened with a label starts this run before the label is added, so a failing
-        # check waits up to a minute for the label before it fails.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NUMBER: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          has_label() {
-            local labels
-            labels=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name') || return 1
-            grep -qxF 'no changelog' <<<"$labels"
-          }
-          if has_label; then
-            echo 'The pull request has the "no changelog" label, so no entry is needed.'
-            exit 0
-          fi
-          if python tools/check_release.py changelog --base "origin/$BASE_REF" --head HEAD; then
-            exit 0
-          fi
-          for _ in 1 2 3 4 5 6; do
-            sleep 10
-            if has_label; then
-              echo 'The "no changelog" label arrived, so no entry is needed.'
-              exit 0
-            fi
-          done
-          echo '::error::Add a line under "## [Unreleased]" in CHANGELOG.md, or the "no changelog" label if users will not notice the change. Adding the label runs this check again.'
-          exit 1
-
       - name: Check the version numbers
         run: python tools/check_release.py versions
-
-      - name: Re-run earlier failed runs on this commit
-        # A failed or cancelled run of a required check blocks the merge even after a newer run
-        # passes. When a label change makes this run pass, earlier failed or cancelled runs on the
-        # same commit run again and read the labels from the API. Pull requests from forks get a
-        # read-only token, so there this only warns.
-        if: success() && (github.event.action == 'labeled' || github.event.action == 'unlabeled')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          list() {
-            gh run list -R "$GITHUB_REPOSITORY" --workflow release-check.yml --commit "$SHA" \
-              --json databaseId,status,conclusion \
-              --jq ".[] | select(.databaseId != $GITHUB_RUN_ID) | \"\\(.databaseId) \\(.status) \\(.conclusion)\""
-          }
-          # A run still waiting for its label can fail after this one ends, so wait for the others
-          # first. The list is read into a variable: grep -q on a pipe could stop gh early, and under
-          # pipefail that would end the wait too soon.
-          others=
-          last_ok=false
-          busy=false
-          for _ in $(seq 1 12); do
-            if others=$(list); then
-              last_ok=true
-              if [ -z "$others" ] || ! grep -qv ' completed ' <<<"$others"; then
-                busy=false
-                break
-              fi
-              busy=true
-            else
-              last_ok=false
-              others=
-              echo "Couldn't list the runs on ${SHA:0:7}, trying again"
-            fi
-            sleep 10
-          done
-          if [ "$last_ok" = false ]; then
-            echo "::warning::Couldn't list the runs on ${SHA:0:7}. Re-run any failed or cancelled Changelog entry run from the Actions tab."
-            exit 0
-          fi
-          if [ "$busy" = true ]; then
-            echo "::warning::A Changelog entry run on ${SHA:0:7} is still going. If it fails, re-run it from the Actions tab."
-          fi
-          [ -n "$others" ] || exit 0
-          # The whole run: --failed leaves cancelled jobs as they are.
-          while read -r id status conclusion; do
-            [ "$status" = completed ] || continue
-            [ "$conclusion" = failure ] || [ "$conclusion" = cancelled ] || continue
-            echo "Re-running run $id ($conclusion)"
-            gh run rerun "$id" -R "$GITHUB_REPOSITORY" \
-              || echo "::warning::Couldn't re-run run $id. Re-run it from the Actions tab."
-          done <<<"$others"
 
   tag:
     name: Release versions

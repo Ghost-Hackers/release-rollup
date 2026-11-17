@@ -20,39 +20,7 @@ concurrency:
 jobs:
   changes:
     name: Changed files
-    runs-on: ubuntu-latest
-    outputs:
-      code: ${{ steps.diff.outputs.code }}
-    steps:
-      - name: Check out the commit with its history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Decide whether the change is docs only
-        id: diff
-        # Skip the tests when every changed file is Markdown or under docs/.
-        # Pushes to master and an empty or unreadable diff always run them.
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          code=true
-          if [ "$EVENT" = pull_request ]; then
-            base=$PR_BASE
-          elif [ "$REF" != refs/heads/master ]; then
-            base=$(git merge-base origin/master HEAD) || base=
-          else
-            base=
-          fi
-          if [ -n "$base" ] && git diff --quiet --no-renames "$base" HEAD -- ':!*.md' ':!docs/' \
-             && ! git diff --quiet --no-renames "$base" HEAD; then
-            code=false
-          fi
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "Base ${base:-none}, code changed: $code"
+    uses: ./.github/workflows/changed-files.yml
 
   test:
     name: Tests (${{ matrix.os }})
