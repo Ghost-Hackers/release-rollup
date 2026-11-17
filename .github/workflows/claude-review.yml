@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@463e9c5e249a36fdbba28073f41a743d0796b66d (sha256 ca6a2089d3b06d6ad50b9002a764a29a3b77205b04149eb70337bf6421fde721). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@1afa1c0029ec9b693c589f8ec633e73d2126810a (sha256 43c3144b0e2ffcc08e86dd6396dead88d2cfe3f01859f7d1b71f7c2a8b58b99f). Edit it there, not here.
 name: Claude review
 
 on:
@@ -10,9 +10,16 @@ on:
 permissions:
   contents: read
 
+# Usage limits can differ per model, so the probe asks the model the review runs on.
+env:
+  REVIEW_MODEL: claude-opus-5-5
+
 jobs:
-  review:
-    name: Review
+  # Asks for one short answer before the review starts. When the service can't run (no secret, a refused secret,
+  # a usage limit, an outage) this posts the reason on the pull request and the review shows as skipped. Every
+  # other outcome, a failure of this job included, still runs the review, which then fails as before.
+  available:
+    name: Availability
     if: |
       (contains(fromJSON('["pull_request_target", "pull_request"]'), github.event_name) &&
        github.event.pull_request.draft == false &&
@@ -20,6 +27,150 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        startsWith(github.event.comment.body, '@claude review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Own group, queued: a cancelled Availability job would fail its run's review, so runs take turns instead.
+    concurrency:
+      group: claude-review-availability-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      available: ${{ steps.probe.outputs.available }}
+      reason: ${{ steps.probe.outputs.reason }}
+    steps:
+      - name: Check the trigger
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "::error::Trigger the Claude review with pull_request_target, not pull_request; move the trigger together with the new pin"
+          exit 1
+      # The version and the command the review's action installs (src/entrypoints/run.ts at its pinned commit).
+      # A failed install is one of the reasons the next step reports.
+      - name: Install the CLI
+        id: install
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.325
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Check that the model answers
+        id: probe
+        env:
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INSTALL: ${{ steps.install.outcome }}
+          WHAT: reviewed
+        run: |
+          reason=
+          unknown=
+          if [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
+            reason="neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set as a secret"
+          elif [ "$INSTALL" != success ]; then
+            # The action installs the same way, so the review would fail too; this may be a bad version, not an outage.
+            echo "::error::The CLI couldn't be installed, so nothing was $WHAT"
+            exit 1
+          else
+            # The two variables the action sets (action.yml at its pinned commit), from an empty folder and with no
+            # tools, so nothing from any branch is loaded.
+            dir=$(mktemp -d)
+            status=0
+            (cd "$dir" && ANTHROPIC_API_KEY=$API_KEY CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN timeout 120 claude -p "Reply with OK" \
+              --model "$REVIEW_MODEL" --output-format stream-json --verbose --tools "" --strict-mcp-config) \
+              > "$dir/out.jsonl" 2> "$dir/err.txt" || status=$?
+            if [ "$status" -ne 0 ] || ! jq -se 'any(.[]; .type == "result" and .is_error == false)' "$dir/out.jsonl" >/dev/null 2>&1; then
+              # The error kind on the failed answer, typed as SDKAssistantMessageError in the agent SDK.
+              kind=$(jq -rs '[.[] | select(.type == "assistant") | .error // empty] | last // ""' "$dir/out.jsonl" 2>/dev/null || true)
+              case "$kind" in
+                authentication_failed) reason="the token or API key was refused as invalid, expired or revoked" ;;
+                oauth_org_not_allowed | account_on_hold | verification_required)
+                  reason="the account behind the token or API key is blocked or needs attention" ;;
+                billing_error) reason="the account is out of credit" ;;
+                rate_limit) reason="a usage or rate limit is reached" ;;
+                overloaded | server_error) reason="the API is down or overloaded" ;;
+                *)
+                  if [ "$status" -eq 124 ]; then
+                    reason="the API didn't answer within 2 minutes"
+                  else
+                    line=$(jq -rs '[.[] | select(.type == "result") | (.result // .errors[0]? // empty)] | first // ""' \
+                      "$dir/out.jsonl" 2>/dev/null || true)
+                    [ -n "$line" ] || line=$(grep -m 1 . "$dir/err.txt" || true)
+                    reason="unavailable: ${line:-exit status $status}"
+                    unknown=1
+                  fi ;;
+              esac
+            fi
+          fi
+          # The comment is public: one line, no secret, no control characters or backticks.
+          reason=${reason%%$'\n'*}
+          for secret in "$OAUTH_TOKEN" "$API_KEY"; do
+            if [ -n "$secret" ]; then reason=${reason//"$secret"/***}; fi
+          done
+          reason=$(printf '%s' "$reason" | tr -d '\000-\037\177`')
+          reason=${reason:0:200}
+          reason=${reason%.}
+          # An error that isn't a known outage may be this probe's own fault (a retired model, a changed option), and
+          # skipping would pass a review that never ran. It fails here, and the review fails on this job's result.
+          if [ -n "$unknown" ]; then
+            echo "::error::Claude couldn't run for a reason that isn't a known outage, so nothing was $WHAT: $reason"
+            exit 1
+          fi
+          if [ -z "$reason" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          { echo "available=false"; echo "reason=$reason"; } >> "$GITHUB_OUTPUT"
+          echo "::warning::Claude couldn't run: $reason. Nothing was $WHAT."
+          echo "Claude couldn't run: $reason. This pull request wasn't $WHAT; merging isn't blocked." >> "$GITHUB_STEP_SUMMARY"
+      # The outputs above already decide whether the review runs, so a GitHub error from here on only warns.
+      # It runs after a failed probe too: an unknown error writes no reason, so an earlier comment is removed.
+      - name: Update the couldn't-run comment
+        if: ${{ !cancelled() && steps.probe.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          MARKER: claude-review-availability
+          WHAT: reviewed
+          REASON: ${{ steps.probe.outputs.reason }}
+        run: |
+          # This job's comments, oldest first. Without the list a new comment is posted, and a later run removes the extra.
+          ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id") \
+            || { echo "::warning::The earlier couldn't-run comments couldn't be listed"; ids=; }
+          keep=
+          if [ -n "$REASON" ]; then
+            body=$(printf '<!-- %s -->\nClaude couldn'"'"'t run: %s. This pull request wasn'"'"'t %s; merging isn'"'"'t blocked.\n' \
+              "$MARKER" "$REASON" "$WHAT")
+            keep=$(printf '%s\n' "$ids" | tail -n 1)
+            if [ -n "$keep" ]; then
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$keep" -f body="$body" >/dev/null \
+                || echo "::warning::The couldn't-run comment wasn't updated"
+            else
+              gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null \
+                || echo "::warning::The couldn't-run comment wasn't posted"
+            fi
+          fi
+          # An answer makes every earlier comment out of date; a failure keeps only the newest, updated above.
+          for id in $ids; do
+            if [ "$id" != "$keep" ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" >/dev/null \
+                || echo "::warning::The earlier couldn't-run comment wasn't removed"
+            fi
+          done
+
+  review:
+    name: Review
+    needs: available
+    if: |
+      !cancelled() && needs.available.outputs.available != 'false' && (
+      (contains(fromJSON('["pull_request_target", "pull_request"]'), github.event_name) &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '@claude review') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # On the job, not the workflow: a run whose job is skipped must not cancel a running review.
@@ -39,6 +190,14 @@ jobs:
         run: |
           echo "::error::Trigger the Claude review with pull_request_target, not pull_request; move the trigger together with the new pin"
           exit 1
+      # Only a "can't run" from the Availability job skips this job. Anything else that stopped it fails here.
+      - name: Check the availability result
+        if: needs.available.result != 'success'
+        env:
+          RESULT: ${{ needs.available.result }}
+        run: |
+          echo "::error::The Availability job ended with '$RESULT', so nothing was reviewed; use Re-run failed jobs once it's fixed"
+          exit 1
       - name: Check the Claude secret
         env:
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -57,6 +216,14 @@ jobs:
           read -r sha base base_sha head_repo < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
             --json headRefOid,baseRefName,baseRefOid,headRepository,headRepositoryOwner \
             --jq '[.headRefOid, .baseRefName, .baseRefOid, (.headRepositoryOwner.login + "/" + .headRepository.name)] | @tsv')
+          # gh pr view reports the commit the pull request was last compared with, which is often where the branch
+          # left the base. The checkout is the base branch's tip, so that is what it gets checked against.
+          ref=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$base")
+          base_tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$ref" --jq .object.sha) || base_tip=
+          if [ -z "$base_tip" ]; then
+            echo "::error::Couldn't read the tip of $base"
+            exit 1
+          fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "::error::Pull requests from forks aren't reviewed"
             exit 1
@@ -69,13 +236,13 @@ jobs:
               exit 1
             fi
           fi
-          { echo "number=$NUMBER"; echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; } >> "$GITHUB_OUTPUT"
+          { echo "number=$NUMBER"; echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; echo "base_tip=$base_tip"; } >> "$GITHUB_OUTPUT"
       # The base branch, never the pull request's files: Claude Code loads settings, hooks and MCP servers from
       # its working folder, and those must not come from the branch under review.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The base branch by name: CodeQL counts a SHA read from gh pr view as coming from the pull request. The
-          # collection checks that this is still the base commit captured with the head.
+          # collection checks that this is still the base tip read with the head.
           ref: ${{ steps.pr.outputs.base }}
           fetch-depth: 0
           persist-credentials: false
@@ -88,9 +255,10 @@ jobs:
           SHA: ${{ steps.pr.outputs.sha }}
           BASE: ${{ steps.pr.outputs.base }}
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          BASE_TIP: ${{ steps.pr.outputs.base_tip }}
         run: |
-          if [ "$(git rev-parse HEAD)" != "$BASE_SHA" ]; then
-            echo '::error::The base branch moved between reading the pull request and the checkout, so the rules and the diff would come from different commits; comment "@claude review" to run it again'
+          if [ "$(git rev-parse HEAD)" != "$BASE_TIP" ]; then
+            echo '::error::The base branch moved between reading it and the checkout; comment "@claude review" to run it again'
             exit 1
           fi
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
@@ -133,7 +301,11 @@ jobs:
           read -r now now_base < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,baseRefName \
             --jq '[.headRefOid, .baseRefName] | @tsv')
           if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
-            echo '::error::The pull request moved to a new head or base while its data was collected; a new push gets its own review, and after a retarget comment "@claude review"'
+            if [ "$GITHUB_EVENT_NAME" = pull_request_target ]; then
+              echo '::error::The pull request moved to a new head or base while its data was collected; a new push gets its own review, and after a retarget use Re-run all jobs on this run'
+            else
+              echo '::error::The pull request moved to a new head or base while its data was collected; push to the pull request to review it again'
+            fi
             exit 1
           fi
       - name: Collect earlier reviews
@@ -216,9 +388,22 @@ jobs:
             Before commenting, read `earlier-reviews.md`. Don't raise a point again that is resolved or still open.
             When a new commit fixes an earlier point, list it under "Fixed since the last review" in your summary.
 
-            Report only real problems. Each one is an inline comment on the line it's about, starting with its
-            severity and a short title, then what is wrong and what to change. Where the fix is a few lines, add it
-            as a GitHub suggestion block.
+            Work through the diff one hunk at a time:
+            1. List the inputs and states that could break the hunk: empty, missing or malformed values; unusual names and
+               characters (spaces, newlines, leading dashes, quotes, non-ASCII); concurrent runs, reruns and restarts; forks;
+               other pull requests on the same commit; a retarget or a push to the base mid-run; other repos that use a copy of
+               the file.
+            2. Trace who calls the changed code and who reads what it writes, in `files/` and in the working folder, and check
+               that each one still works.
+            3. Check every claim in the description, the issues, the commits and the code comments against the code. A claim the
+               code doesn't keep is a finding.
+            Before returning, go over your findings again and drop any you can't prove from the code. Every finding needs a
+            concrete failure scenario: the input or event, what happens, and what should happen instead.
+
+            Report only problems that need a change. Each one is an inline comment on the line it's about, starting with its
+            severity and a short title. Under the title, quote the problem code in a fenced block headed with its path:line,
+            then give the failure scenario and what to change, quoting any error message exactly. Where the fix is a few lines,
+            add it as a ```suggestion block; otherwise show the change as before and after.
             - P0: can lose or corrupt user data, worlds, servers, release files or a published release, or leaks a secret
             - P1: a bug, a security hole, a missing check on untrusted input, a test that can't fail, or a change
               that doesn't do what its issue asks
@@ -234,9 +419,11 @@ jobs:
             lines the PR didn't touch unless the change breaks them.
 
             Return the structured result with the commit you reviewed, the count per severity and a short summary
-            of the findings, or "No findings." when there are none.
+            of the findings, or "No findings." when there are none. End the summary with a line starting "Rules checked:"
+            that names the `.github/REVIEWING.md` headings you checked the change against, or "Rules checked: no
+            REVIEWING.md" when the file doesn't exist.
           claude_args: |
-            --model claude-sonnet-5-5
+            --model ${{ env.REVIEW_MODEL }}
             --permission-mode default
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,Read(//proc/**),Read(//sys/**),Read(~/.*),Read(~/.*/**),Read(~/work/_temp/**),Read(~/work/_actions/**),Read(~/work/_tool/**),Read(./.git/**)"
             --allowedTools "mcp__github_inline_comment__create_inline_comment"
@@ -248,14 +435,15 @@ jobs:
           RESULT: ${{ steps.claude.outputs.structured_output }}
           HEAD_SHA: ${{ steps.pr.outputs.sha }}
           BASE: ${{ steps.pr.outputs.base }}
-          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          BASE_TIP: ${{ steps.pr.outputs.base_tip }}
           NUMBER: ${{ steps.pr.outputs.number }}
           GH_TOKEN: ${{ github.token }}
           MARKER: claude-review
           TITLE: Claude review
+          RETRY: push to the pull request to review it against the new base
         run: |
           if [ "$CONCLUSION" != "success" ]; then
-            echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success"
+            echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success; if it stopped answering during the review, use Re-run failed jobs once it's back"
             exit 1
           fi
           if ! jq -e 'has("commit") and has("p0") and has("p1") and has("p2") and has("p3")' <<<"${RESULT:-null}" >/dev/null; then
@@ -271,10 +459,29 @@ jobs:
             "$commit"*) ;;
             *) echo "::error::Claude reviewed '$commit', not the head commit $HEAD_SHA"; exit 1 ;;
           esac
+          # A retarget keeps the head, so the check above can't see one. The rerun after a retarget cancels a review
+          # it finds on the head commit, but a comment-started run, a repo without that workflow, or a retarget it
+          # hasn't reached yet still ends here. A rerun keeps the run's event, and "Find the pull request" refuses a
+          # comment-started run once the base isn't the default branch. RETRY says what works for that one instead.
+          base_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+          if [ "$base_now" != "$BASE" ]; then
+            if [ "$GITHUB_EVENT_NAME" = pull_request_target ]; then
+              echo "::error::The pull request was retargeted from $BASE to $base_now during the review; use Re-run all jobs on this run to review it against $base_now"
+            else
+              echo "::error::The pull request was retargeted from $BASE to $base_now during the review; a rerun keeps the comment event, which only covers pull requests into the default branch, so $RETRY"
+            fi
+            exit 1
+          fi
           read -r p0 p1 p2 p3 < <(jq -r '[.p0, .p1, .p2, .p3] | @tsv' <<<"$RESULT")
           summary=$(jq -r .summary <<<"$RESULT")
+          # The run log doesn't show what was read, so the result has to name the project rules it checked.
+          case "${summary##*$'\n'}" in
+            "Rules checked: "?*) ;;
+            *) echo "::error::The review summary doesn't end with a Rules checked line, so it can't show the project rules were read"
+               exit 1 ;;
+          esac
           {
-            echo "### $TITLE of ${HEAD_SHA:0:7} against $BASE at ${BASE_SHA:0:7}"
+            echo "### $TITLE of ${HEAD_SHA:0:7} against $BASE at ${BASE_TIP:0:7}"
             echo
             echo "| P0 | P1 | P2 | P3 |"
             echo "|---|---|---|---|"
@@ -288,7 +495,7 @@ jobs:
             counts="P0 $p0, P1 $p1, P2 $p2, P3 $p3"
           fi
           body=$(printf '<!-- %s -->\n**%s of %s against %s at %s:** %s\n\n%s\n' "$MARKER" "$TITLE" "${commit:0:7}" "$BASE" \
-            "${BASE_SHA:0:7}" "$counts" "$summary")
+            "${BASE_TIP:0:7}" "$counts" "$summary")
           id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id" | tail -n 1)
           if [ -n "$id" ]; then

@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@463e9c5e249a36fdbba28073f41a743d0796b66d (sha256 4e5f253a21fdcdc278c62e5bfe508f417d8411b8cce12d866c6c4e63b9be4610). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@1afa1c0029ec9b693c589f8ec633e73d2126810a (sha256 4facb78b2dcf3e74ccad3db6747cd899824bdfeee342d8012f9d41dfb4035184). Edit it there, not here.
 name: Claude
 
 on:
@@ -53,6 +53,14 @@ jobs:
           read -r sha base base_sha head_repo < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" \
             --json headRefOid,baseRefName,baseRefOid,headRepository,headRepositoryOwner \
             --jq '[.headRefOid, .baseRefName, .baseRefOid, (.headRepositoryOwner.login + "/" + .headRepository.name)] | @tsv')
+          # gh pr view reports the commit the pull request was last compared with, which is often where the branch
+          # left the base. The checkout is the base branch's tip, so that is what it gets checked against.
+          ref=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$base")
+          base_tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$ref" --jq .object.sha) || base_tip=
+          if [ -z "$base_tip" ]; then
+            echo "::error::Couldn't read the tip of $base"
+            exit 1
+          fi
           # As with the reviews: a fork's files are someone else's text, read by a run that holds the API secret.
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "::error::Questions on pull requests from forks aren't answered"
@@ -64,13 +72,13 @@ jobs:
             echo "::error::Questions on pull requests are only answered for pull requests into $default"
             exit 1
           fi
-          { echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; } >> "$GITHUB_OUTPUT"
+          { echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; echo "base_tip=$base_tip"; } >> "$GITHUB_OUTPUT"
       # The base branch for a pull request, the default branch for an issue, never a pull request's files: the
       # action loads settings, hooks and MCP servers from its working folder.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The base branch by name: CodeQL counts a SHA read from gh pr view as coming from the pull request. The
-          # collection checks that this is still the base commit captured with the head.
+          # collection checks that this is still the base tip read with the head.
           ref: ${{ steps.pr.outputs.base || github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
@@ -84,11 +92,12 @@ jobs:
           SHA: ${{ steps.pr.outputs.sha }}
           BASE: ${{ steps.pr.outputs.base }}
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          BASE_TIP: ${{ steps.pr.outputs.base_tip }}
           TITLE: ${{ github.event.issue.title }}
           REQUEST: ${{ github.event.comment.body || github.event.issue.body }}
         run: |
-          if [ "$IS_PR" = true ] && [ "$(git rev-parse HEAD)" != "$BASE_SHA" ]; then
-            echo '::error::The base branch moved between reading the pull request and the checkout, so the rules and the diff would come from different commits; comment "@claude" with your question to ask again'
+          if [ "$IS_PR" = true ] && [ "$(git rev-parse HEAD)" != "$BASE_TIP" ]; then
+            echo '::error::The base branch moved between reading it and the checkout; comment "@claude" with your question to ask again'
             exit 1
           fi
           dir=.claude-context
@@ -181,7 +190,7 @@ jobs:
           IS_PR: ${{ github.event.issue.pull_request != null }}
           SHA: ${{ steps.pr.outputs.sha }}
           BASE: ${{ steps.pr.outputs.base }}
-          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          BASE_TIP: ${{ steps.pr.outputs.base_tip }}
         run: |
           if [ "$CONCLUSION" != "success" ]; then
             echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success"
@@ -203,10 +212,10 @@ jobs:
               printf '\n---\n'
               if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
                 printf 'This answer is about %s against %s at %s. The pull request moved to %s into %s while it was written; comment "@claude" with the question again for an answer about the new commit.\n' \
-                  "${SHA:0:7}" "$BASE" "${BASE_SHA:0:7}" "${now:0:7}" "$now_base"
+                  "${SHA:0:7}" "$BASE" "${BASE_TIP:0:7}" "${now:0:7}" "$now_base"
               else
                 # A push to the base alone doesn't change the answer for the commits it names, so it isn't a move.
-                printf 'Answered at %s against %s at %s.\n' "${SHA:0:7}" "$BASE" "${BASE_SHA:0:7}"
+                printf 'Answered at %s against %s at %s.\n' "${SHA:0:7}" "$BASE" "${BASE_TIP:0:7}"
               fi
             } >> "$RUNNER_TEMP/answer.md"
           fi

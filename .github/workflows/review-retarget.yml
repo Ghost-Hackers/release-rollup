@@ -1,0 +1,100 @@
+# Copied from Ghost-Hackers/ci-workflows@1afa1c0029ec9b693c589f8ec633e73d2126810a (sha256 67dffbf0305062f84aa945d79904dbf96c6935fb411326e06f4dd21cef26f387). Edit it there, not here.
+name: Review retarget
+
+# A retarget keeps the head commit, so the review on that commit would stand against the old base. This reruns it.
+# A rerun keeps the original pull_request_target event, and "Find the pull request" reads the base live, so the
+# rerun checks out and diffs against the new base.
+#
+# The caller sends only edited events here, and the reviews never get them: a skipped required check counts as
+# passed. Title and body edits skip this job, and its check ("Retarget / Rerun the review") isn't a required one,
+# so that skip can't pass a review.
+on:
+  pull_request_target:
+    types: [edited]
+
+permissions: {}
+
+jobs:
+  rerun:
+    name: Rerun the review
+    if: github.event.action == 'edited' && github.event.changes.base != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Two quick retargets queue, so the second one waits for the first rerun to start and then reruns it again.
+    concurrency:
+      group: review-retarget-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    # No secret, no checkout and nothing from the pull request runs here. actions: write is for cancel and rerun.
+    permissions:
+      actions: write
+      checks: read
+    steps:
+      - name: Rerun the review of the head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          # A private reusable workflow can only be called from its own org, so the review comes from this org's copy.
+          SOURCE: ${{ github.repository_owner }}/ci-workflows/.github/workflows/claude-review.yml@
+        run: |
+          # Branch protection reads the newest check run of a name on the head commit, so only the newest review
+          # is rerun. The security review starts from comments, whose checks sit on the default branch, not here.
+          # The name alone can match another job, so each run must also be the review workflow: the reusable review
+          # called from a ci-workflows repo, or a standalone copy of it. The jq below names both.
+          list=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?filter=latest" \
+            --jq '.check_runs[] | select(.app.slug == "github-actions" and (.name == "Claude / Review" or .name == "Review"))
+                  | [.id, .details_url, .name] | @tsv' | sort -rn)
+          mapfile -t checks <<<"$list"
+          run=
+          for check in "${checks[@]}"; do
+            IFS=$'\t' read -r _ url name <<<"$check"
+            id=$(sed -n 's|.*/actions/runs/\([0-9][0-9]*\)/.*|\1|p' <<<"$url")
+            [ -n "$id" ] || continue
+            info=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.event,
+              (if .path == ".github/workflows/claude-review.yml" then "Review"
+               elif any(.referenced_workflows[]?; .path | startswith(env.SOURCE))
+               then "Claude / Review" else "other" end),
+              ([.pull_requests[]?.number] | join(" "))] | @tsv')
+            IFS=$'\t' read -r event review prs <<<"$info"
+            if [ "$review" != "$name" ]; then
+              echo "Run $id has a $name check but isn't the review workflow; skipping it"
+              continue
+            fi
+            # A run's pull_requests only lists pull requests whose head matches the run, and it can be empty. Then the
+            # run can't be tied to this pull request, and skipping it would leave its review green against the old base.
+            if [ -z "$prs" ]; then
+              echo "::error::Run $id on ${SHA:0:7} lists no pull request, so it can't be tied to #$NUMBER; use Re-run all jobs on the review run of #$NUMBER"
+              exit 1
+            fi
+            # Two pull requests can share a head commit. A rerun keeps its run's pull request, so it has to be this one.
+            case " $prs " in
+              *" $NUMBER "*) ;;
+              *) echo "Run $id reviewed pull request $prs, not #$NUMBER; skipping it"; continue ;;
+            esac
+            if [ "$prs" != "$NUMBER" ]; then
+              echo "::error::Run $id on ${SHA:0:7} belongs to pull requests $prs, so it can't tell which one it reviewed; use Re-run all jobs on the review run of #$NUMBER"
+              exit 1
+            fi
+            run=$id
+            break
+          done
+          if [ -z "$run" ]; then
+            echo "No review of #$NUMBER on ${SHA:0:7} to rerun; a review still to start reads the new base itself"
+            exit 0
+          fi
+          if [ "$event" != pull_request_target ]; then
+            echo "::error::The review on ${SHA:0:7} came from run $run, started by $event, not pull_request_target"
+            exit 1
+          fi
+          # A run that is still going can't be rerun. Its result would be for the old base, so cancel it first.
+          status=$(gh run view "$run" -R "$GITHUB_REPOSITORY" --json status --jq .status)
+          if [ "$status" != completed ]; then
+            # It may finish on its own between the two calls, so a refused cancel isn't an error.
+            gh run cancel "$run" -R "$GITHUB_REPOSITORY" || true
+            until [ "$status" = completed ]; do
+              sleep 10
+              status=$(gh run view "$run" -R "$GITHUB_REPOSITORY" --json status --jq .status)
+            done
+          fi
+          gh run rerun "$run" -R "$GITHUB_REPOSITORY"
+          echo "Rerunning the review in run $run against the new base"
