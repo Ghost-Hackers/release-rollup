@@ -1,5 +1,5 @@
-# Copied from Ghost-Hackers/ci-workflows@eb844066a4c245274231e676d8567c41e9e60053 (sha256 94bde451252f479ca91f8aba466b25fb0dbc9d7d2204839a9b0aafc17992f0cf). Edit it there, not here.
-name: Changed files
+# Copied from Ghost-Hackers/ci-workflows@eade72a616f761781e2a0fc2cef27870e2692bfd (sha256 2c5adca607be0a51f21a9d1658352ab9d58809ada345b7daa5b865304d8d5c52). Edit it there, not here.
+name: 📂 Changed files
 
 on:
   workflow_call:
@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: diff
-        name: Check whether code changed
+        name: 🔍 Check whether code changed
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
@@ -42,7 +42,7 @@ jobs:
             pull_request) base=$PR_BASE ;;
             pull_request_target)
               # Its checkout is the base branch, not the pull request, so there's nothing to compare.
-              echo "::notice::Under pull_request_target the checkout isn't the pull request, so the tests run." ;;
+              echo "::notice::ℹ️ Under pull_request_target the checkout isn't the pull request, so the tests run." ;;
             *)
               if [ -n "$DEFAULT_BRANCH" ] && [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
                 base=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD) || base=
@@ -55,7 +55,7 @@ jobs:
               # Long magic keeps its own words: :(glob)docs/** becomes :(exclude,glob)docs/**.
               ":("*")"*) excludes+=(":(exclude,${pattern#:(}") ;;
               # Short magic like :/ can't be combined with exclude, so the answer stays code.
-              :*) echo "::warning::The pattern $pattern uses short pathspec magic; write it as :(top) and the like."
+              :*) echo "::warning::⚠️ The pattern $pattern uses short pathspec magic; write it as :(top) and the like."
                   excludes=(); break ;;
               *) excludes+=(":(exclude)$pattern") ;;
             esac
@@ -66,3 +66,4 @@ jobs:
             code=false
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "📂 Code changed: $code" >> "$GITHUB_STEP_SUMMARY" || true

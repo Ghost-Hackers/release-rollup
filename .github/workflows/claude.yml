@@ -1,5 +1,5 @@
-# Copied from Ghost-Hackers/ci-workflows@eb844066a4c245274231e676d8567c41e9e60053 (sha256 95a845e356efd81e7af774ba7b5e17c91e82497eb0e5f3371b6ce4a8c54e636d). Edit it there, not here.
-name: Claude
+# Copied from Ghost-Hackers/ci-workflows@eade72a616f761781e2a0fc2cef27870e2692bfd (sha256 099d2cc6bb9c01eec727f894492ebd7f9e51a84760487821f4eb4ea2fb143a9d). Edit it there, not here.
+name: 💬 Claude
 
 on:
   issue_comment:
@@ -34,16 +34,16 @@ jobs:
       pull-requests: read
       issues: write
     steps:
-      - name: Check the Claude secret
+      - name: 🔒 Check the Claude secret
         env:
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
-            echo "::error::Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as an org secret"
+            echo "::error::❌ Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as an org secret"
             exit 1
           fi
-      - name: Find the pull request
+      - name: 📥 Find the pull request
         id: pr
         if: github.event.issue.pull_request
         env:
@@ -58,18 +58,18 @@ jobs:
           ref=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$base")
           base_tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$ref" --jq .object.sha) || base_tip=
           if [ -z "$base_tip" ]; then
-            echo "::error::Couldn't read the tip of $base"
+            echo "::error::❌ Couldn't read the tip of $base"
             exit 1
           fi
           # As with the reviews: a fork's files are someone else's text, read by a run that holds the API secret.
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
-            echo "::error::Questions on pull requests from forks aren't answered"
+            echo "::error::❌ Questions on pull requests from forks aren't answered"
             exit 1
           fi
           # A comment runs the default branch's workflow, so only pull requests into that branch match their rules.
           default=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)
           if [ "$base" != "$default" ]; then
-            echo "::error::Questions on pull requests are only answered for pull requests into $default"
+            echo "::error::❌ Questions on pull requests are only answered for pull requests into $default"
             exit 1
           fi
           { echo "sha=$sha"; echo "base=$base"; echo "base_sha=$base_sha"; echo "base_tip=$base_tip"; } >> "$GITHUB_OUTPUT"
@@ -82,11 +82,11 @@ jobs:
           ref: ${{ steps.pr.outputs.base || github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Name the checked-out commit
+      - name: 🏷️ Name the checked-out commit
         # The branch can move after the event, so links are pinned to what was checked out, not to github.sha.
         id: checkout
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Collect the request for Claude
+      - name: 📥 Collect the request for Claude
         id: collect
         # Claude gets no shell, so the workflow gathers what it reads into .claude-context/. A pull request's files
         # are written from their blobs as plain files and never run.
@@ -102,7 +102,7 @@ jobs:
           REQUEST: ${{ github.event.comment.body || github.event.issue.body }}
         run: |
           if [ "$IS_PR" = true ] && [ "$(git rev-parse HEAD)" != "$BASE_TIP" ]; then
-            echo '::error::The base branch moved between reading it and the checkout; comment "@claude" with your question to ask again'
+            echo '::error::❌ The base branch moved between reading it and the checkout; comment "@claude" with your question to ask again'
             exit 1
           fi
           dir=.claude-context
@@ -145,11 +145,12 @@ jobs:
             read -r now now_base < <(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,baseRefName \
               --jq '[.headRefOid, .baseRefName] | @tsv')
             if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
-              echo '::error::The pull request moved to a new head or base while its data was collected; comment "@claude" with your question to ask again'
+              echo '::error::❌ The pull request moved to a new head or base while its data was collected; comment "@claude" with your question to ask again'
               exit 1
             fi
           fi
       - id: claude
+        name: 🤖 Answer with Claude
         uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -184,10 +185,10 @@ jobs:
             answer.
 
             Link every file, doc, commit and issue you name: a file as
-            [`path:line`](https://github.com/REPO/blob/HEAD COMMIT/path#Lline), which is the pull request's head or, for an
+            [`name:line`](https://github.com/REPO/blob/HEAD COMMIT/path#Lline), which is the pull request's head or, for an
             issue, the default branch, at BASE COMMIT for a line or path the pull request removes, deletes or renames, or at BASE TIP for one you read in the working folder outside `.claude-context/`; a commit as [`abc1234`](https://github.com/REPO/commit/<full sha>); an issue or pull
             request in REPO as #n, and one in another repo as owner/repo#n in plain text, since GitHub doesn't link it inside backticks.
-            Every link shows short text, never a bare URL. A path with backticks in it goes in a label fenced by more backticks than its longest run of them. In a link's URL, percent-encode every character of a path other than letters, digits, `/`, `.`, `-` and `_`, so `a).md` becomes `a%29.md`. For a Markdown file, put `?plain=1` before `#L`, since the rendered view has no line anchors. These forms are for REPO: a file, doc or commit in another repo links to that repo's own URL. Quote code in a fenced block
+            Every link shows short text, never a bare URL. A file in REPO is labeled with its file name alone, as `ci.yml:40`, never with its folders; when two files you name share a name, add folders until they differ. A path with backticks in it goes in a label fenced by more backticks than its longest run of them. In a link's URL, percent-encode every character of a path other than letters, digits, `/`, `.`, `-` and `_`, so `a).md` becomes `a%29.md`. For a Markdown file, put `?plain=1` before `#L`, since the rendered view has no line anchors. These forms are for REPO: a file, doc or commit in another repo links to that repo's own URL, and a file there is labeled with the repo's name and the file's full path, as `release-rollup/.github/workflows/ci.yml:40`, with the owner in front when it isn't REPO's owner. Quote code in a fenced block
             tagged with its language, never with a path.
 
             Return the structured result with your answer as GitHub Markdown, written for the person who asked.
@@ -196,7 +197,7 @@ jobs:
             --permission-mode default
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,Read(//proc/**),Read(//sys/**),Read(~/.*),Read(~/.*/**),Read(~/work/_temp/**),Read(~/work/_actions/**),Read(~/work/_tool/**),Read(./.git/**)"
             --json-schema '{"type":"object","properties":{"answer":{"type":"string","minLength":1}},"required":["answer"]}'
-      - name: Post the answer
+      - name: 💬 Post the answer
         if: always() && steps.claude.outcome != 'skipped'
         env:
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
@@ -210,14 +211,14 @@ jobs:
           BASE_TIP: ${{ steps.pr.outputs.base_tip }}
         run: |
           if [ "$CONCLUSION" != "success" ]; then
-            echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success"
+            echo "::error::❌ Claude finished with '${CONCLUSION:-nothing}', not success"
             exit 1
           fi
           if ! jq -e '(.answer | type) == "string" and (.answer | length) > 0' <<<"${RESULT:-null}" >/dev/null; then
-            echo "::error::Claude returned no answer"
+            echo "::error::❌ Claude returned no answer"
             exit 1
           fi
-          { printf '**Claude answer** for @%s\n\n' "$ASKER"; jq -r .answer <<<"$RESULT"; } > "$RUNNER_TEMP/answer.md"
+          { printf '**💬 Claude answer** for @%s\n\n' "$ASKER"; jq -r .answer <<<"$RESULT"; } > "$RUNNER_TEMP/answer.md"
           # The answer was written from the pull request as it was when the data was collected. Name its head and base
           # commits, and say so when a push or a retarget came in meanwhile, so the answer isn't taken for one about the
           # new head.
@@ -237,3 +238,4 @@ jobs:
             } >> "$RUNNER_TEMP/answer.md"
           fi
           gh issue comment "$NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/answer.md"
+          echo "💬 Answered @$ASKER on #$NUMBER" >> "$GITHUB_STEP_SUMMARY" || true

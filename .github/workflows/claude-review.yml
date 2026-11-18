@@ -1,5 +1,5 @@
-# Copied from Ghost-Hackers/ci-workflows@eb844066a4c245274231e676d8567c41e9e60053 (sha256 400e2e82c8d497cbe3e2cd2880e446c2b0716e95156e98c9fca7795b8deb32f8). Edit it there, not here.
-name: Claude review
+# Copied from Ghost-Hackers/ci-workflows@eade72a616f761781e2a0fc2cef27870e2692bfd (sha256 e7ad30bc14b6e991adc51d1ccf4f0bdd1d580725f0753360f3c974f05aecdcd4). Edit it there, not here.
+name: 🤖 Claude review
 
 on:
   pull_request_target:
@@ -40,21 +40,21 @@ jobs:
       available: ${{ steps.probe.outputs.available }}
       reason: ${{ steps.probe.outputs.reason }}
     steps:
-      - name: Check the trigger
+      - name: 🔍 Check the trigger
         if: github.event_name == 'pull_request'
         run: |
-          echo "::error::Trigger the Claude review with pull_request_target, not pull_request; move the trigger together with the new pin"
+          echo "::error::❌ Trigger the Claude review with pull_request_target, not pull_request; move the trigger together with the new pin"
           exit 1
       # The version and the command the review's action installs (src/entrypoints/run.ts at its pinned commit).
       # A failed install is one of the reasons the next step reports.
-      - name: Install the CLI
+      - name: 📦 Install the CLI
         id: install
         continue-on-error: true
         run: |
           set -o pipefail
           curl -fsSL https://claude.ai/install.sh | bash -s -- 2.1.325
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Check that the model answers
+      - name: 🤖 Check that the model answers
         id: probe
         env:
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -69,7 +69,7 @@ jobs:
             reason="neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set as a secret"
           elif [ "$INSTALL" != success ]; then
             # The action installs the same way, so the review would fail too; this may be a bad version, not an outage.
-            echo "::error::The CLI couldn't be installed, so nothing was $WHAT"
+            echo "::error::❌ The CLI couldn't be installed, so nothing was $WHAT"
             exit 1
           else
             # The two variables the action sets (action.yml at its pinned commit), from an empty folder and with no
@@ -113,19 +113,20 @@ jobs:
           # An error that isn't a known outage may be this probe's own fault (a retired model, a changed option), and
           # skipping would pass a review that never ran. It fails here, and the review fails on this job's result.
           if [ -n "$unknown" ]; then
-            echo "::error::Claude couldn't run for a reason that isn't a known outage, so nothing was $WHAT: $reason"
+            echo "::error::❌ Claude couldn't run for a reason that isn't a known outage, so nothing was $WHAT: $reason"
             exit 1
           fi
           if [ -z "$reason" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Claude answered, so the pull request gets $WHAT" >> "$GITHUB_STEP_SUMMARY" || true
             exit 0
           fi
           { echo "available=false"; echo "reason=$reason"; } >> "$GITHUB_OUTPUT"
-          echo "::warning::Claude couldn't run: $reason. Nothing was $WHAT."
-          echo "**$SKIPPED skipped:** $reason. This pull request wasn't $WHAT; merging isn't blocked." >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::⚠️ Claude couldn't run: $reason. Nothing was $WHAT."
+          echo "**⏭️ $SKIPPED skipped:** $reason. This pull request wasn't $WHAT; merging isn't blocked." >> "$GITHUB_STEP_SUMMARY"
       # The outputs above already decide whether the review runs, so a GitHub error from here on only warns.
       # It runs after a failed probe too: an unknown error writes no reason, so an earlier comment is removed.
-      - name: Update the couldn't-run comment
+      - name: 💬 Update the couldn't-run comment
         if: ${{ !cancelled() && steps.probe.outcome != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 2
@@ -140,27 +141,92 @@ jobs:
           # This job's comments, oldest first. Without the list a new comment is posted, and a later run removes the extra.
           ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id") \
-            || { echo "::warning::The earlier couldn't-run comments couldn't be listed"; ids=; }
+            || { echo "::warning::⚠️ The earlier couldn't-run comments couldn't be listed"; ids=; }
           keep=
           if [ -n "$REASON" ]; then
-            body=$(printf '<!-- %s -->\n**%s skipped:** %s. This pull request wasn'"'"'t %s; merging isn'"'"'t blocked.\n' \
+            body=$(printf '<!-- %s -->\n**⏭️ %s skipped:** %s. This pull request wasn'"'"'t %s; merging isn'"'"'t blocked.\n' \
               "$MARKER" "$SKIPPED" "$REASON" "$WHAT")
             keep=$(printf '%s\n' "$ids" | tail -n 1)
             if [ -n "$keep" ]; then
               gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$keep" -f body="$body" >/dev/null \
-                || echo "::warning::The couldn't-run comment wasn't updated"
+                || echo "::warning::⚠️ The couldn't-run comment wasn't updated"
             else
               gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null \
-                || echo "::warning::The couldn't-run comment wasn't posted"
+                || echo "::warning::⚠️ The couldn't-run comment wasn't posted"
             fi
           fi
           # An answer makes every earlier comment out of date; a failure keeps only the newest, updated above.
           for id in $ids; do
             if [ "$id" != "$keep" ]; then
               gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" >/dev/null \
-                || echo "::warning::The earlier couldn't-run comment wasn't removed"
+                || echo "::warning::⚠️ The earlier couldn't-run comment wasn't removed"
             fi
           done
+
+  # The reactions only show progress, so a GitHub error in these jobs only warns. Adding or removing one on a
+  # pull request needs Issues: write and Pull requests: write, and the review jobs don't get Issues: write, so the
+  # reactions have jobs of their own. Each review has its own pair, one while it runs and one for a clean result, so
+  # the two reviews on one pull request don't touch each other's.
+  react-start:
+    name: Mark started
+    needs: available
+    if: needs.available.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: 🏷️ Mark the pull request as in review
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          # Empty for a comment, which names no commit.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUNNING: eyes
+          # The security review only runs on request, so its clean mark goes when the head moves on.
+          STALE: ${{ github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) && 'hooray' || '' }}
+        run: |
+          # One line in the run summary, whatever happens below.
+          added='' removed=''
+          summary() {
+            changes=${added:+set$added}
+            [ -z "$removed" ] || changes="${changes:+$changes, }removed$removed"
+            echo "🏷️ Reactions: ${changes:-none changed}" >> "$GITHUB_STEP_SUMMARY" || true
+          }
+          trap summary EXIT
+          # A run that starts late leaves the mark alone once a newer push has moved the head on; that push's run owns it.
+          head_now=$HEAD_SHA
+          if [ -n "$HEAD_SHA" ]; then
+            head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) \
+              || { echo "::warning::⚠️ The head commit couldn't be read"; head_now=$HEAD_SHA; }
+          fi
+          if [ "$head_now" = "$HEAD_SHA" ]; then
+            if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$RUNNING" >/dev/null; then
+              added+=" $RUNNING"
+            else
+              echo "::warning::⚠️ The $RUNNING reaction wasn't added"
+            fi
+          else
+            echo "The head moved on to $head_now, so the $RUNNING reaction is left to the newer run"
+          fi
+          if [ -n "$STALE" ]; then
+            reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content)"') \
+            || { echo "::warning::⚠️ The review reactions couldn't be listed"; reactions=; }
+            while read -r id content; do
+              [ -n "$id" ] || continue
+              if [ "$content" = "$STALE" ]; then
+                if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
+                  removed+=" $content"
+                else
+                  echo "::warning::⚠️ The $content reaction wasn't removed"
+                fi
+              fi
+            done <<<"$reactions"
+          fi
 
   review:
     name: Review
@@ -184,32 +250,35 @@ jobs:
       pull-requests: write
       issues: read
       actions: read
+    outputs:
+      sha: ${{ steps.pr.outputs.sha }}
+      findings: ${{ steps.result.outcome == 'success' && steps.result.outputs.findings || '' }}
     steps:
       # A caller still on pull_request would otherwise skip this job, and a skipped required check counts as passed.
       # This fails first, before any step touches a secret.
-      - name: Check the trigger
+      - name: 🔍 Check the trigger
         if: github.event_name == 'pull_request'
         run: |
-          echo "::error::Trigger the Claude review with pull_request_target, not pull_request; move the trigger together with the new pin"
+          echo "::error::❌ Trigger the Claude review with pull_request_target, not pull_request; move the trigger together with the new pin"
           exit 1
       # Only a "can't run" from the Availability job skips this job. Anything else that stopped it fails here.
-      - name: Check the availability result
+      - name: 🔍 Check the availability result
         if: needs.available.result != 'success'
         env:
           RESULT: ${{ needs.available.result }}
         run: |
-          echo "::error::The Availability job ended with '$RESULT', so nothing was reviewed; use Re-run failed jobs once it's fixed"
+          echo "::error::❌ The Availability job ended with '$RESULT', so nothing was reviewed; use Re-run failed jobs once it's fixed"
           exit 1
-      - name: Check the Claude secret
+      - name: 🔒 Check the Claude secret
         env:
           OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
-            echo "::error::Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as an org secret"
+            echo "::error::❌ Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as an org secret"
             exit 1
           fi
-      - name: Find the pull request
+      - name: 📥 Find the pull request
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
@@ -223,18 +292,18 @@ jobs:
           ref=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/"))' "$base")
           base_tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$ref" --jq .object.sha) || base_tip=
           if [ -z "$base_tip" ]; then
-            echo "::error::Couldn't read the tip of $base"
+            echo "::error::❌ Couldn't read the tip of $base"
             exit 1
           fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
-            echo "::error::Pull requests from forks aren't reviewed"
+            echo "::error::❌ Pull requests from forks aren't reviewed"
             exit 1
           fi
           # A comment runs the default branch's workflow, so only pull requests into that branch match their rules.
           if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
             default=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)
             if [ "$base" != "$default" ]; then
-              echo "::error::Comment-started reviews only cover pull requests into $default; push to the pull request to review it"
+              echo "::error::❌ Comment-started reviews only cover pull requests into $default; push to the pull request to review it"
               exit 1
             fi
           fi
@@ -248,7 +317,7 @@ jobs:
           ref: ${{ steps.pr.outputs.base }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Collect the pull request for Claude
+      - name: 📥 Collect the pull request for Claude
         id: collect
         # Claude gets no shell, so the workflow gathers everything it reads into .pr-review/. Nothing from the
         # pull request runs: its files are unpacked as plain files, without symlinks.
@@ -261,7 +330,7 @@ jobs:
           BASE_TIP: ${{ steps.pr.outputs.base_tip }}
         run: |
           if [ "$(git rev-parse HEAD)" != "$BASE_TIP" ]; then
-            echo '::error::The base branch moved between reading it and the checkout; comment "@claude review" to run it again'
+            echo '::error::❌ The base branch moved between reading it and the checkout; comment "@claude review" to run it again'
             exit 1
           fi
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
@@ -307,13 +376,13 @@ jobs:
             --jq '[.headRefOid, .baseRefName] | @tsv')
           if [ "$now" != "$SHA" ] || [ "$now_base" != "$BASE" ]; then
             if [ "$GITHUB_EVENT_NAME" = pull_request_target ]; then
-              echo '::error::The pull request moved to a new head or base while its data was collected; a new push gets its own review, and after a retarget use Re-run all jobs on this run'
+              echo '::error::❌ The pull request moved to a new head or base while its data was collected; a new push gets its own review, and after a retarget use Re-run all jobs on this run'
             else
-              echo '::error::The pull request moved to a new head or base while its data was collected; push to the pull request to review it again'
+              echo '::error::❌ The pull request moved to a new head or base while its data was collected; push to the pull request to review it again'
             fi
             exit 1
           fi
-      - name: Collect earlier reviews
+      - name: 📥 Collect earlier reviews
         # The inline review threads with their resolved state, every review and every comment, for Claude to read.
         env:
           GH_TOKEN: ${{ github.token }}
@@ -354,6 +423,7 @@ jobs:
               "# Conversation",
               (($conversation[0] | add // [])[] | "## \(.user.login)", .body, "")' > .pr-review/earlier-reviews.md
       - id: claude
+        name: 🤖 Review with Claude
         uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -393,7 +463,7 @@ jobs:
             file in `files/` you need for context.
 
             Before commenting, read `earlier-reviews.md`. Don't raise a point again that is resolved or still open.
-            When a new commit fixes an earlier point, list it under "Fixed since the last review" in your summary.
+            When a new commit fixes an earlier point, list it under "✅ Fixed since the last review" in your summary.
 
             Work through the diff one hunk at a time:
             1. List the inputs and states that could break the hunk: empty, missing or malformed values; unusual names and
@@ -408,20 +478,20 @@ jobs:
             concrete failure scenario: the input or event, what happens, and what should happen instead.
 
             Report only problems that need a change. Each one is an inline comment on the line it's about, whose first line
-            is the bold title `**Claude review · P2: <title>**`, with the finding's severity in place of P2 and a short title. Under the title, link the code it's about as [`path:line`](https://github.com/REPO/blob/HEAD COMMIT/path#Lline), at
+            is the bold title `**⚠️ Claude review · P2: <title>**`, with the finding's level emoji and severity in place of ⚠️ and P2 and a short title. Under the title, link the code it's about as [`name:line`](https://github.com/REPO/blob/HEAD COMMIT/path#Lline), at
             BASE COMMIT instead for a line the pull request removes, and quote it in a fenced block tagged with its language,
             then give the failure scenario and what to change, quoting any error message exactly. Where the fix is a few lines,
             add it as a ```suggestion block; otherwise show the change as before and after.
             Link everything else you name: a file or doc to its blob at HEAD COMMIT, at BASE COMMIT when the pull
             request deletes or renames it, or at BASE TIP when you read it in the working folder rather than in `files/`, a commit as [`abc1234`](https://github.com/REPO/commit/<full sha>), an issue or
             pull request in REPO as #n, and one in another repo as owner/repo#n in plain text, since GitHub doesn't link it inside backticks.
-            Every link shows short text, never a bare URL. A path with backticks in it goes in a label fenced by more backticks than its longest run of them. In a link's URL, percent-encode every character of a path other than letters, digits, `/`, `.`, `-` and `_`, so `a).md` becomes `a%29.md`. For a Markdown file, put `?plain=1` before `#L`, since the rendered view has no line anchors. These forms are for REPO: a file, doc or commit in another repo links to that repo's own URL.
-            - P0: can lose or corrupt user data, worlds, servers, release files or a published release, or leaks a secret
-            - P1: a bug, a security hole, a missing check on untrusted input, a test that can't fail, or a change
+            Every link shows short text, never a bare URL. A file in REPO is labeled with its file name alone, as `ci.yml:40`, never with its folders; when two files you name share a name, add folders until they differ. A path with backticks in it goes in a label fenced by more backticks than its longest run of them. In a link's URL, percent-encode every character of a path other than letters, digits, `/`, `.`, `-` and `_`, so `a).md` becomes `a%29.md`. For a Markdown file, put `?plain=1` before `#L`, since the rendered view has no line anchors. These forms are for REPO: a file, doc or commit in another repo links to that repo's own URL, and a file there is labeled with the repo's name and the file's full path, as `release-rollup/.github/workflows/ci.yml:40`, with the owner in front when it isn't REPO's owner.
+            - ⛔ P0: can lose or corrupt user data, worlds, servers, release files or a published release, or leaks a secret
+            - ❌ P1: a bug, a security hole, a missing check on untrusted input, a test that can't fail, or a change
               that doesn't do what its issue asks
-            - P2: should be fixed before merging: missed edge cases (empty, missing or malformed input, limits,
+            - ⚠️ P2: should be fixed before merging: missed edge cases (empty, missing or malformed input, limits,
               reruns, restarts), a missing test for a code change, docs that no longer match, a REVIEWING.md rule broken
-            - P3: minor: naming, clarity, wording and house style
+            - ℹ️ P3: minor: naming, clarity, wording and house style
             Also check: workflow permissions are minimal and actions are pinned to a commit; no personal info,
             home folder paths or agent files are added; every commit references the issue it fixes.
 
@@ -431,8 +501,9 @@ jobs:
             lines the PR didn't touch unless the change breaks them.
 
             Return the structured result with the commit you reviewed, the count per severity and a short summary
-            of the findings, or "No findings." when there are none. The summary links what it names the same way, each
-            finding's `path:line` included. Apart from the findings, the "Fixed since the last review" list, why a failed check failed and the Rules checked line, it says
+            of the findings, or "No findings." when there are none. Each finding in the summary is one line that starts
+            with its level emoji and severity, then its link, as `- ⚠️ P2 [`ci.yml:40`](…): …`. The summary links what it
+            names the same way, each finding's `name:line` included. Apart from the findings, the "✅ Fixed since the last review" list, why a failed check failed and the Rules checked line, it says
             nothing about what you read, skipped or where you put a comment. End the summary with a line starting "Rules checked:" that names the
             `.github/REVIEWING.md` headings you checked the change against, each as a link to its heading in that file at
             BASE TIP, or "Rules checked: no REVIEWING.md" when the file doesn't exist.
@@ -442,7 +513,8 @@ jobs:
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,Read(//proc/**),Read(//sys/**),Read(~/.*),Read(~/.*/**),Read(~/work/_temp/**),Read(~/work/_actions/**),Read(~/work/_tool/**),Read(./.git/**)"
             --allowedTools "mcp__github_inline_comment__create_inline_comment"
             --json-schema '{"type":"object","properties":{"commit":{"type":"string"},"p0":{"type":"integer","minimum":0},"p1":{"type":"integer","minimum":0},"p2":{"type":"integer","minimum":0},"p3":{"type":"integer","minimum":0},"summary":{"type":"string"}},"required":["commit","p0","p1","p2","p3","summary"]}'
-      - name: Check the review result
+      - name: 🔍 Check the review result
+        id: result
         if: always() && steps.claude.outcome != 'skipped'
         env:
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
@@ -455,61 +527,104 @@ jobs:
           MARKER: claude-review
           TITLE: Claude review
           RETRY: push to the pull request to review it against the new base
+          BADGE: Claude review
+          REVIEW: 🤖 Code review
+          ACTION: ${{ github.event.action }}
+          EVENT_BASE: ${{ github.event.pull_request.base.ref }}
         run: |
           if [ "$CONCLUSION" != "success" ]; then
-            echo "::error::Claude finished with '${CONCLUSION:-nothing}', not success; if it stopped answering during the review, use Re-run failed jobs once it's back"
+            echo "::error::❌ Claude finished with '${CONCLUSION:-nothing}', not success; if it stopped answering during the review, use Re-run failed jobs once it's back"
             exit 1
           fi
           if ! jq -e 'has("commit") and has("p0") and has("p1") and has("p2") and has("p3")' <<<"${RESULT:-null}" >/dev/null; then
-            echo "::error::Claude returned no review result"
+            echo "::error::❌ Claude returned no review result"
             exit 1
           fi
           commit=$(jq -r .commit <<<"$RESULT")
           if [ "${#commit}" -lt 7 ]; then
-            echo "::error::Claude reported commit '$commit', too short to match the head commit"
+            echo "::error::❌ Claude reported commit '$commit', too short to match the head commit"
             exit 1
           fi
           case "$HEAD_SHA" in
             "$commit"*) ;;
-            *) echo "::error::Claude reviewed '$commit', not the head commit $HEAD_SHA"; exit 1 ;;
+            *) echo "::error::❌ Claude reviewed '$commit', not the head commit $HEAD_SHA"; exit 1 ;;
           esac
           # A retarget keeps the head, so the check above can't see one. The rerun after a retarget cancels a review
           # it finds on the head commit, but a comment-started run, a repo without that workflow, or a retarget it
-          # hasn't reached yet still ends here. A rerun keeps the run's event, and "Find the pull request" refuses a
+          # hasn't reached yet still ends here. A rerun keeps the run's event, and "📥 Find the pull request" refuses a
           # comment-started run once the base isn't the default branch. RETRY says what works for that one instead.
           base_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
           if [ "$base_now" != "$BASE" ]; then
             if [ "$GITHUB_EVENT_NAME" = pull_request_target ]; then
-              echo "::error::The pull request was retargeted from $BASE to $base_now during the review; use Re-run all jobs on this run to review it against $base_now"
+              echo "::error::❌ The pull request was retargeted from $BASE to $base_now during the review; use Re-run all jobs on this run to review it against $base_now"
             else
-              echo "::error::The pull request was retargeted from $BASE to $base_now during the review; a rerun keeps the comment event, which only covers pull requests into the default branch, so $RETRY"
+              echo "::error::❌ The pull request was retargeted from $BASE to $base_now during the review; a rerun keeps the comment event, which only covers pull requests into the default branch, so $RETRY"
             fi
             exit 1
           fi
           read -r p0 p1 p2 p3 < <(jq -r '[.p0, .p1, .p2, .p3] | @tsv' <<<"$RESULT")
+          findings=$((p0 + p1 + p2 + p3))
+          if [ $((p0 + p1)) -gt 0 ]; then
+            overall=❌
+          elif [ "$findings" -gt 0 ]; then
+            overall=⚠️
+          else
+            overall=✅
+          fi
           summary=$(jq -r .summary <<<"$RESULT")
           # The run log doesn't show what was read, so the result has to name the project rules it checked.
           case "${summary##*$'\n'}" in
             "Rules checked: "?*) ;;
-            *) echo "::error::The review summary doesn't end with a Rules checked line, so it can't show the project rules were read"
+            *) echo "::error::❌ The review summary doesn't end with a Rules checked line, so it can't show the project rules were read"
                exit 1 ;;
           esac
           {
-            echo "### $TITLE of ${HEAD_SHA:0:7} against $BASE at ${BASE_TIP:0:7}"
+            echo "$overall $TITLE: ⛔ $p0 · ❌ $p1 · ⚠️ $p2 · ℹ️ $p3"
             echo
-            echo "| P0 | P1 | P2 | P3 |"
-            echo "|---|---|---|---|"
-            echo "| $p0 | $p1 | $p2 | $p3 |"
+            echo "### $TITLE of ${HEAD_SHA:0:7} against $BASE at ${BASE_TIP:0:7}"
             echo
             echo "$summary"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ $((p0 + p1 + p2 + p3)) -eq 0 ]; then
-            counts="no findings"
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+          failing=$((p0 + p1))
+          if [ "$failing" -eq 1 ]; then
+            headline="❌ 1 finding fails the check"
+          elif [ "$failing" -gt 1 ]; then
+            headline="❌ $failing findings fail the check"
+          elif [ "$findings" -eq 1 ]; then
+            headline="⚠️ 1 finding"
+          elif [ "$findings" -gt 1 ]; then
+            headline="⚠️ $findings findings"
           else
-            counts="P0 $p0, P1 $p1, P2 $p2, P3 $p3"
+            headline="✅ No findings"
           fi
-          body=$(printf '<!-- %s -->\n**%s of %s against %s at %s:** %s\n\n%s\n' "$MARKER" "$TITLE" "${commit:0:7}" "$BASE" \
-            "${BASE_TIP:0:7}" "$counts" "$summary")
+          # Fixed words only: nothing a person typed (a comment, a title) goes into the table.
+          case "$GITHUB_EVENT_NAME" in
+            pull_request_target)
+              # A rerun keeps its event, whose base is the one the run started with, so a different base read
+              # live means the run was started again after a retarget.
+              if [ -n "$EVENT_BASE" ] && [ "$EVENT_BASE" != "$BASE" ]; then
+                trigger=retarget
+              else
+                case "$ACTION" in
+                  opened|synchronize|reopened) trigger=push ;;
+                  ready_for_review) trigger=ready ;;
+                  *) trigger=$GITHUB_EVENT_NAME ;;
+                esac
+              fi
+              ;;
+            issue_comment) trigger=comment ;;
+            *) trigger=$GITHUB_EVENT_NAME ;;
+          esac
+          # A branch name can hold | and other Markdown, which would break the table row; escaped, it reads as typed.
+          # shellcheck disable=SC2001 # the replacement puts back the character it matched
+          base_cell=$(sed 's/[][\\`*_{}<>()#+!|~&-]/\\&/g' <<<"$BASE")
+          # \x60 is a backtick: the commits show as code.
+          body=$(printf '<!-- %s -->\n![%s](https://img.shields.io/badge/%s-D97757?logo=claude&logoColor=white) **%s**\n\n%s\n%s\n| %s | %s | \x60%s\x60 | %s \x60%s\x60 | %s |\n\n%s\n' \
+            "$MARKER" "$BADGE" "${BADGE// /%20}" "$headline" \
+            "| Review | Result | Commit | Against | Trigger |" "| --- | --- | --- | --- | --- |" \
+            "$REVIEW" "$overall ⛔ $p0 · ❌ $p1 · ⚠️ $p2 · ℹ️ $p3" "${HEAD_SHA:0:7}" "$base_cell" "${BASE_TIP:0:7}" "$trigger" \
+            "$summary")
           id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id" | tail -n 1)
           if [ -n "$id" ]; then
@@ -518,6 +633,123 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null
           fi
           if [ $((p0 + p1)) -gt 0 ]; then
-            echo "::error::$p0 P0 and $p1 P1 findings must be fixed before merging"
+            echo "::error::❌ $p0 P0 and $p1 P1 findings must be fixed before merging"
             exit 1
           fi
+
+  # Runs after every outcome once the Availability job ran, a skipped or failed review included. Only a review of the
+  # current head with no findings keeps or adds the clean mark; anything else removes it. A cancelled review was replaced
+  # by a newer run, which owns the reactions by then, so this job leaves them alone.
+  react-end:
+    name: Mark result
+    needs: [available, review, react-start]
+    if: |
+      always() && github.event_name != 'pull_request' && needs.available.result != 'skipped' &&
+      needs.review.result != 'cancelled' && (github.event.pull_request.number || github.event.issue.number)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: 🏷️ Update the review reactions
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUNNING: eyes
+          CLEAN: "+1"
+          STALE: ${{ github.event_name == 'pull_request_target' && contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) && 'hooray' || '' }}
+          # A result that failed its own checks counts as unknown, so it gets no clean mark.
+          FINDINGS: ${{ needs.review.result == 'success' && needs.review.outputs.findings || '' }}
+          HEAD_SHA: ${{ needs.review.outputs.sha }}
+        run: |
+          # One line in the run summary, whatever happens below.
+          added='' removed=''
+          summary() {
+            changes=${added:+set$added}
+            [ -z "$removed" ] || changes="${changes:+$changes, }removed$removed"
+            echo "🏷️ Reactions: ${changes:-none changed}" >> "$GITHUB_STEP_SUMMARY" || true
+          }
+          trap summary EXIT
+          clean=
+          if [ "$FINDINGS" = 0 ]; then
+            # The clean mark belongs to the reviewed head, and a push during the review moves the head on.
+            head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) \
+              || { echo "::warning::⚠️ The head commit couldn't be read, so the $CLEAN reaction wasn't added"; head_now=; }
+            if [ -n "$HEAD_SHA" ] && [ "$head_now" = "$HEAD_SHA" ]; then clean=1; fi
+          fi
+          reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content)"') \
+            || { echo "::warning::⚠️ The review reactions couldn't be listed"; reactions=; }
+          kept=
+          while read -r id content; do
+            [ -n "$id" ] || continue
+            drop=
+            case "$content" in
+              "$RUNNING") drop=1 ;;
+              "$CLEAN") if [ -n "$clean" ]; then kept=1; else drop=1; fi ;;
+              "$STALE") drop=1 ;;
+            esac
+            if [ -n "$drop" ]; then
+              if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
+                removed+=" $content"
+              else
+                echo "::warning::⚠️ The $content reaction wasn't removed"
+              fi
+            fi
+          done <<<"$reactions"
+          if [ -n "$clean" ] && [ -z "$kept" ]; then
+            if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$CLEAN" >/dev/null; then
+              added+=" $CLEAN"
+            else
+              echo "::warning::⚠️ The $CLEAN reaction wasn't added"
+            fi
+          fi
+
+  # The reviews skip draft pull requests, so a push to a draft runs neither reaction job above. This one only removes
+  # the clean marks of both reviews, which belong to an older head. A review still running on that older head keeps
+  # its running mark and removes it when it ends. Nothing here checks out or runs the pull request's code.
+  react-draft:
+    name: Clear marks
+    if: |
+      github.event_name == 'pull_request_target' && github.event.pull_request.draft == true &&
+      contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: 🏷️ Remove the clean marks
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          CLEAN: +1 hooray
+        run: |
+          # One line in the run summary, whatever happens below.
+          added='' removed=''
+          summary() {
+            changes=${added:+set$added}
+            [ -z "$removed" ] || changes="${changes:+$changes, }removed$removed"
+            echo "🏷️ Reactions: ${changes:-none changed}" >> "$GITHUB_STEP_SUMMARY" || true
+          }
+          trap summary EXIT
+          reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content)"') \
+            || { echo "::warning::⚠️ The review reactions couldn't be listed"; reactions=; }
+          while read -r id content; do
+            [ -n "$id" ] || continue
+            case " $CLEAN " in
+              *" $content "*)
+                if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
+                  removed+=" $content"
+                else
+                  echo "::warning::⚠️ The $content reaction wasn't removed"
+                fi
+                ;;
+            esac
+          done <<<"$reactions"

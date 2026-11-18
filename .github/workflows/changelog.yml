@@ -1,5 +1,5 @@
-# Copied from Ghost-Hackers/ci-workflows@eb844066a4c245274231e676d8567c41e9e60053 (sha256 197e871ce7406e04a2a0112a7fa870dda8b39dd931ed540b4d36849a8fda8d34). Edit it there, not here.
-name: Changelog entry
+# Copied from Ghost-Hackers/ci-workflows@eade72a616f761781e2a0fc2cef27870e2692bfd (sha256 cfb74c3b4d755714f3be72cdd0d61f77b18018443058d02444ea0d65dbd5332e). Edit it there, not here.
+name: 📝 Changelog entry
 
 on:
   workflow_call:
@@ -34,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check the changelog entry
+      - name: 🔍 Check the changelog entry
         # A change under the code paths needs a new line under "## [Unreleased]" unless the pull request has the
         # skip label. The labels and the base branch come from the API, not the event: "opened" can arrive before
         # the labels it was opened with are added, and a re-run replays the event as it was, so after a retarget it
@@ -50,18 +50,21 @@ jobs:
           CHANGELOG: ${{ inputs.changelog }}
           SKIP_LABEL: ${{ inputs.skip-label }}
         run: |
+          # One line for the run's summary page. A failed write leaves the check's result alone.
+          result() { echo "$1" >> "$GITHUB_STEP_SUMMARY" || true; }
           if [ "$EVENT" = pull_request_target ]; then
             # That event checks out the base branch, so the pull request's changes aren't there to read.
-            echo "::error::Call this from a pull_request trigger. pull_request_target checks out the base branch, not the pull request."
+            echo "::error::❌ Call this from a pull_request trigger. pull_request_target checks out the base branch, not the pull request."
             exit 1
           fi
           if [ "$EVENT" != pull_request ]; then
             echo "This is a $EVENT event, not a pull request, so there is no entry to check."
+            result "⏭️ Skipped: a $EVENT event has no pull request to check"
             exit 0
           fi
           if [ -z "$SKIP_LABEL" ]; then
             # An empty label would match the empty line of a pull request with no labels and skip the check.
-            echo "::error::skip-label is empty, so every pull request would skip the check. Set a label name."
+            echo "::error::❌ skip-label is empty, so every pull request would skip the check. Set a label name."
             exit 1
           fi
           has_label() {
@@ -71,17 +74,18 @@ jobs:
           }
           if has_label; then
             echo "The pull request has the \"$SKIP_LABEL\" label, so no entry is needed."
+            result "⏭️ Skipped: the pull request has the \"$SKIP_LABEL\" label"
             exit 0
           fi
           base=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName) || base=
           if [ -z "$base" ]; then
-            echo "::error::Couldn't read the base branch of the pull request, so the check can't run. Re-run it."
+            echo "::error::❌ Couldn't read the base branch of the pull request, so the check can't run. Re-run it."
             exit 1
           fi
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           if ! git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin \
             "+refs/heads/$base:refs/remotes/origin/$base"; then
-            echo "::error::Couldn't fetch the base branch of the pull request, so the check can't run. Re-run it."
+            echo "::error::❌ Couldn't fetch the base branch of the pull request, so the check can't run. Re-run it."
             exit 1
           fi
           if git rev-parse --verify --quiet 'HEAD^2' >/dev/null; then
@@ -90,7 +94,8 @@ jobs:
             head=$(git rev-parse HEAD)
           fi
           rc=0
-          out=$(BASE_REF="$base" HEAD_SHA="$head" python3 -I - <<'PY'
+          changed_list=$(mktemp)
+          out=$(BASE_REF="$base" HEAD_SHA="$head" CHANGED_LIST="$changed_list" python3 -I - <<'PY'
           import os
           import re
           import subprocess
@@ -121,7 +126,7 @@ jobs:
           def fail(message):
               # A file name can hold a newline; escaped, it can't start a workflow command of its own.
               message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              print(f"::error::{message}")
+              print(f"::error::❌ {message}")
               sys.exit(1)
 
 
@@ -163,12 +168,19 @@ jobs:
           # Bytes that aren't UTF-8 show as \xff and the like, so printing the message can't fail.
           names = [p.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace") for p in changed[:3]]
           shown = ", ".join(names) + (f" and {len(changed) - 3} more" if len(changed) > 3 else "")
+          # For the summary line, on one line and without Markdown: a file name can hold any of these.
+          with open(os.environ["CHANGED_LIST"], "w", encoding="utf-8") as listed:
+              listed.write(re.sub(r"[\x00-\x1f\x7f\x60*_<>\[\]|\\]", "?", shown))
           fail(f'{shown} changed under {" ".join(paths)}, but "## [Unreleased]" in {changelog} has no new entry. '
                f'Add one, or put the "{label}" label on the pull request if users won\'t notice the change.')
           PY
           ) || rc=$?
           if [ "$rc" = 0 ]; then
             echo "$out"
+            case "$out" in
+              "Found a new entry.") result "✅ Changelog entry found" ;;
+              *) result "⏭️ Skipped: no file under the code paths changed" ;;
+            esac
             exit 0
           fi
           # The label may have been added a moment after the run started, so look again before failing. The
@@ -177,14 +189,18 @@ jobs:
             sleep "${LABEL_DELAY:-10}"
             if has_label; then
               echo "The \"$SKIP_LABEL\" label arrived, so no entry is needed."
+              result "⏭️ Skipped: the \"$SKIP_LABEL\" label was added"
               exit 0
             fi
           done
           echo "$out"
-          echo "::error::Adding the \"$SKIP_LABEL\" label runs this check again."
+          if [ -s "$changed_list" ]; then
+            result "❌ No changelog entry: $(cat "$changed_list") changed"
+          fi
+          echo "::error::❌ Adding the \"$SKIP_LABEL\" label runs this check again."
           exit 1
 
-      - name: Re-run earlier failed runs on this commit
+      - name: 🔁 Re-run earlier failed runs on this commit
         # A run of a required check that didn't pass blocks the merge even after a newer run passes. When a
         # label change or a retarget makes this run pass, earlier blocking runs on the same commit run
         # again and read the labels and the base from the API. Inside a called workflow GITHUB_RUN_ID is the caller's run, so the
@@ -200,12 +216,12 @@ jobs:
         run: |
           if [ -z "$SHA" ]; then
             # Without a commit, gh run list would list every run of the workflow.
-            echo "::warning::This event has no pull request commit, so earlier runs are not re-run."
+            echo "::warning::⚠️ This event has no pull request commit, so earlier runs are not re-run."
             exit 0
           fi
           delay="${LABEL_DELAY:-10}"
           wf=$(gh run view "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" --json workflowDatabaseId --jq .workflowDatabaseId) || {
-            echo "::warning::Couldn't look up this workflow, so earlier runs are not re-run."
+            echo "::warning::⚠️ Couldn't look up this workflow, so earlier runs are not re-run."
             exit 0
           }
           list() {
@@ -233,16 +249,16 @@ jobs:
                 # A fork's run lists no pull request, so it can't be tied to this one and is left for a person.
                 if [ "$prs" = ",," ]; then
                   if [ "$status" != completed ]; then
-                    echo "::warning::Run $id on ${SHA:0:7} is still going and lists no pull request, so it isn't waited for; if it fails, use Re-run all jobs on it." >>"$warnings"
+                    echo "::warning::⚠️ Run $id on ${SHA:0:7} is still going and lists no pull request, so it isn't waited for; if it fails, use Re-run all jobs on it." >>"$warnings"
                   else
-                    echo "::warning::Run $id on ${SHA:0:7} lists no pull request, so it isn't rerun; use Re-run all jobs on it if it still blocks #$NUMBER." >>"$warnings"
+                    echo "::warning::⚠️ Run $id on ${SHA:0:7} lists no pull request, so it isn't rerun; use Re-run all jobs on it if it still blocks #$NUMBER." >>"$warnings"
                   fi
                   continue
                 fi
                 [[ "$prs" == *",$NUMBER,"* ]] || continue
                 echo "$id $status $conclusion"
               else
-                echo "::warning::Couldn't read the pull requests of run $id, so it is left alone." >>"$warnings"
+                echo "::warning::⚠️ Couldn't read the pull requests of run $id, so it is left alone." >>"$warnings"
               fi
             done <<<"$rows"
           }
@@ -274,11 +290,11 @@ jobs:
           done
           cat "$warnings"
           if [ "$last_ok" = false ]; then
-            echo "::warning::Couldn't list the runs on ${SHA:0:7}. Re-run any run of this check that didn't pass from the Actions tab."
+            echo "::warning::⚠️ Couldn't list the runs on ${SHA:0:7}. Re-run any run of this check that didn't pass from the Actions tab."
             exit 0
           fi
           if [ "$busy" = true ]; then
-            echo "::warning::A run of this check on ${SHA:0:7} is still going. If it fails, re-run it from the Actions tab."
+            echo "::warning::⚠️ A run of this check on ${SHA:0:7} is still going. If it fails, re-run it from the Actions tab."
           fi
           [ -n "$others" ] || exit 0
           # The whole run: --failed leaves cancelled jobs as they are.
@@ -288,5 +304,5 @@ jobs:
             case "$conclusion" in success | skipped | neutral) continue ;; esac
             echo "Re-running run $id ($conclusion)"
             gh run rerun "$id" -R "$GITHUB_REPOSITORY" \
-              || echo "::warning::Couldn't re-run run $id. Re-run it from the Actions tab."
+              || echo "::warning::⚠️ Couldn't re-run run $id. Re-run it from the Actions tab."
           done <<<"$others"
