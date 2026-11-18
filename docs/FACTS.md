@@ -78,7 +78,7 @@ A pull request into master needs these checks, all from GitHub Actions:
 | Check | Workflow | What it runs |
 |---|---|---|
 | Tests (ubuntu-latest), Tests (windows-latest), Tests (windows-11-arm) | [`ci.yml`](../.github/workflows/ci.yml) | `check.sh` with coverage, the release zip build and the end-to-end checks, one job per runner |
-| Pyright strict | [`ci.yml`](../.github/workflows/ci.yml) | Pyright on the whole repo |
+| Pyright strict | [`ci.yml`](../.github/workflows/ci.yml) | Pyright on `src/`, `tests/` and `tools/`, the folders `[tool.pyright]` in `pyproject.toml` includes |
 | Changelog / Entry | [`changelog-check.yml`](../.github/workflows/changelog-check.yml) | a change under `src/` needs a line under `## [Unreleased]`, or the `no changelog` label |
 | Version numbers | [`release-check.yml`](../.github/workflows/release-check.yml) | `tools/check_release.py versions` |
 | CodeQL (python), CodeQL (actions) | [`codeql.yml`](../.github/workflows/codeql.yml) | code scanning |
@@ -87,7 +87,7 @@ A pull request into master needs these checks, all from GitHub Actions:
 
 When every changed file is Markdown or under `docs/`, the "Changed files" job reports `code=false`: the three Tests jobs still start but skip their steps, and Pyright skips. Pushes to master always run everything.
 
-`changed-files.yml`, `changelog.yml` and the Claude workflows are copies from [Ghost-Hackers/ci-workflows](https://github.com/Ghost-Hackers/ci-workflows), made with its `tools/sync.py`. Change them there and sync again. `.github/ci-workflows-copy.txt` lists them, and `.github/dependabot.yml` leaves them out.
+`changed-files.yml`, `changelog.yml`, `review-retarget.yml`, the Claude workflows and `.github/scripts/check_copy.py` are copies from [Ghost-Hackers/ci-workflows](https://github.com/Ghost-Hackers/ci-workflows), made with its `tools/sync.py`. Change them there and sync again. `.github/ci-workflows-copy.txt` lists them, and `.github/dependabot.yml` leaves them out.
 
 `release/0.1.x` has its own ruleset: Tests (ubuntu-latest), Tests (windows-latest), Changelog entry and the two CodeQL checks, from that branch's own workflows.
 
