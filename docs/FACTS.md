@@ -5,6 +5,7 @@ Commands that work, and behavior worth knowing before you change something.
 ## Contents
 
 - [Commands](#commands)
+- [CI](#ci)
 - [Behavior](#behavior)
 
 ## Commands
@@ -69,6 +70,26 @@ release-rollup pre --root prereleases --current <VERSION>
 Full form: `release-rollup pre [--root DIR] [--current VERSION] [--dry-run] [--marker NAME ...] [--trash-dir DIR]`. The `pre` tests are the `Prereleases` class at the end of `tests/test_rollup.py`.
 
 Archive a folder of plain files: `PYTHONPATH=src python3 -m release_rollup archive --root DIR --out NAME.zip [--dry-run] [--trash-dir DIR]`. Prove it with `restore NAME.zip --check`.
+
+## CI
+
+A pull request into master needs these checks, all from GitHub Actions:
+
+| Check | Workflow | What it runs |
+|---|---|---|
+| Tests (ubuntu-latest), Tests (windows-latest), Tests (windows-11-arm) | [`ci.yml`](../.github/workflows/ci.yml) | `check.sh` with coverage, the release zip build and the end-to-end checks, one job per runner |
+| Pyright strict | [`ci.yml`](../.github/workflows/ci.yml) | Pyright on the whole repo |
+| Changelog / Entry | [`changelog-check.yml`](../.github/workflows/changelog-check.yml) | a change under `src/` needs a line under `## [Unreleased]`, or the `no changelog` label |
+| Version numbers | [`release-check.yml`](../.github/workflows/release-check.yml) | `tools/check_release.py versions` |
+| CodeQL (python), CodeQL (actions) | [`codeql.yml`](../.github/workflows/codeql.yml) | code scanning |
+| Review | [`claude-review.yml`](../.github/workflows/claude-review.yml) | the Claude review |
+| Unchanged | [`claude-copy-check.yml`](../.github/workflows/claude-copy-check.yml) | the files copied from ci-workflows weren't edited here |
+
+When every changed file is Markdown or under `docs/`, the "Changed files" job reports `code=false`: the three Tests jobs still start but skip their steps, and Pyright skips. Pushes to master always run everything.
+
+`changed-files.yml`, `changelog.yml` and the Claude workflows are copies from [Ghost-Hackers/ci-workflows](https://github.com/Ghost-Hackers/ci-workflows), made with its `tools/sync.py`. Change them there and sync again. `.github/ci-workflows-copy.txt` lists them, and `.github/dependabot.yml` leaves them out.
+
+`release/0.1.x` has its own ruleset: Tests (ubuntu-latest), Tests (windows-latest), Changelog entry and the two CodeQL checks, from that branch's own workflows.
 
 ## Behavior
 
