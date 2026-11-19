@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@3044a46c42e64b1b49d4973131f4a9f491e48c2a (sha256 cd8c0dd4167c4dd844d4d6475ab3f0b0be46ad9a9f70872a7bbad0e8ab2e286f). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@947a1fa2033ff629f2571702ffeb930d17b38c9d (sha256 d4eec238d3774583359f3f3d4e1cd55c185bf4feb732aabbd7de81f796489524). Edit it there, not here.
 name: 🤖 Claude review
 
 on:
@@ -654,6 +654,7 @@ jobs:
     permissions:
       issues: write
       pull-requests: write
+      actions: read
     steps:
       - name: 🏷️ Update the review reactions
         continue-on-error: true
@@ -670,6 +671,12 @@ jobs:
           # A result that failed its own checks counts as unknown, so it gets no clean mark.
           FINDINGS: ${{ needs.review.result == 'success' && needs.review.outputs.findings || '' }}
           HEAD_SHA: ${{ needs.review.outputs.sha }}
+          # The pushed head, for a review that didn't run. Empty for a comment.
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          # Whether a push starts a run of this review, which then owns the running mark.
+          PUSH_STARTS_RUN: "true"
+          # When this run's event happened, to the second. Only a run started then or later can be the newer push's.
+          RUN_SINCE: ${{ github.event.pull_request.updated_at || github.event.comment.created_at }}
         run: |
           # One line in the run summary, whatever happens below.
           added='' removed=''
@@ -679,12 +686,34 @@ jobs:
             echo "🏷️ Reactions: ${changes:-none changed}" >> "$GITHUB_STEP_SUMMARY" || true
           }
           trap summary EXIT
-          clean=
-          if [ "$FINDINGS" = 0 ]; then
+          clean='' moved=''
+          head=${HEAD_SHA:-$EVENT_HEAD}
+          if [ -n "$head" ]; then
             # The clean mark belongs to the reviewed head, and a push during the review moves the head on.
-            head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) \
-              || { echo "::warning::⚠️ The head commit couldn't be read, so the $CLEAN reaction wasn't added"; head_now=; }
-            if [ -n "$HEAD_SHA" ] && [ "$head_now" = "$HEAD_SHA" ]; then clean=1; fi
+            if now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,isDraft --jq '"\(.headRefOid) \(.isDraft)"'); then
+              read -r head_now draft <<<"$now"
+            else
+              if [ "$FINDINGS" = 0 ]; then
+                echo "::warning::⚠️ The head commit couldn't be read, so the $CLEAN reaction wasn't added"
+              else
+                echo "::warning::⚠️ The head commit couldn't be read"
+              fi
+              head_now='' draft=''
+            fi
+            # Once a push moved the head on, that push's run owns the running mark and may have set it already. A draft
+            # gets no review, a review a push doesn't start gets no such run, and a push made with a workflow's
+            # GITHUB_TOKEN starts none either. So the mark is only left when this caller has a run on the new head for
+            # this pull request. GitHub lists no pull request on a run from a fork, whose review is skipped.
+            if [ -n "$PUSH_STARTS_RUN" ] && [ -n "$head_now" ] && [ "$head_now" != "$head" ] && [ "$draft" != true ]; then
+              caller=${GITHUB_WORKFLOW_REF#"$GITHUB_REPOSITORY"/}
+              export CALLER=${caller%%@*}
+              runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$head_now&event=pull_request_target" \
+                --jq '[.workflow_runs[] | select((.path | sub("@.*$"; "")) == env.CALLER and .created_at >= env.RUN_SINCE
+                  and any(.pull_requests[]?; (.number | tostring) == env.NUMBER))] | length') \
+                || { echo "::warning::⚠️ The runs on the new head couldn't be listed"; runs=0; }
+              if [ -n "$RUN_SINCE" ] && [[ "$runs" =~ ^[1-9] ]]; then moved=1; fi
+            fi
+            if [ "$FINDINGS" = 0 ] && [ -n "$HEAD_SHA" ] && [ "$head_now" = "$HEAD_SHA" ]; then clean=1; fi
           fi
           reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
             --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content) \(.created_at)"') \
@@ -694,7 +723,7 @@ jobs:
             [ -n "$id" ] || continue
             drop=
             case "$content" in
-              "$RUNNING") drop=1 ;;
+              "$RUNNING") if [ -z "$moved" ]; then drop=1; fi ;;
               "$CLEAN") if [ -n "$clean" ]; then kept=1; else drop=1; fi ;;
               "$STALE") if ! [[ "$created" > "$STALE_BEFORE" ]]; then drop=1; fi ;;
             esac
