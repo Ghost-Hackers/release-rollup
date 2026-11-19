@@ -6,6 +6,7 @@ Commands that work, and behavior worth knowing before you change something.
 
 - [Commands](#commands)
 - [CI](#ci)
+- [Releasing](#releasing)
 - [Behavior](#behavior)
 
 ## Commands
@@ -26,6 +27,15 @@ bash tools/check.sh
 ```
 
 On Windows `python3` is the Microsoft Store shortcut, so pass the real interpreter: `PY="py -3.14" bash tools/check.sh` (Git Bash).
+
+`check.sh` needs:
+
+- coverage.py 7.17.3, the version CI pins: `python3 -m pip install coverage==7.17.3`
+- `RR_SMALLFS`, a folder on a filesystem of a few MB, for the tests that fill a disk. On Linux `check.sh` makes one itself, a 4 MB tmpfs in a private mount namespace. On Windows set it to a folder on a small NTFS drive (CI uses an 8 MB VHD).
+- on Windows, `RR_NOLINKS_FS`, a folder on a FAT32 drive, for the tests of a filesystem without hard links
+- a normal user. Root reads past file permissions, so the tests that lock files can't see the refusal they check for, and `check.sh` stops when run as root.
+
+Coverage has to reach 100% of lines and branches on every host. A line no test can reach goes in [`tools/coverage_exclusions.tsv`](../tools/coverage_exclusions.tsv) with the file, the line or `from->to` branch, the host, the line's text and the proof. [`tools/check_coverage.py`](../tools/check_coverage.py) fails when a missed line isn't listed, when a listed line did run, when a listed line's text no longer matches the source, or when the total is below 100%.
 
 End-to-end checks on a release zip (0.2.0 or newer; the zip is unpacked into a temp folder):
 
@@ -90,6 +100,30 @@ When every changed file is Markdown or under `docs/`, the "Changed files" job re
 `changed-files.yml`, `changelog.yml`, `review-retarget.yml`, the Claude workflows and `.github/scripts/check_copy.py` are copies from [Ghost-Hackers/ci-workflows](https://github.com/Ghost-Hackers/ci-workflows), made with its `tools/sync.py`. Change them there and sync again. `.github/ci-workflows-copy.txt` lists them, and `.github/dependabot.yml` leaves them out.
 
 `release/0.1.x` has its own ruleset: Tests (ubuntu-latest), Tests (windows-latest), Changelog entry and the two CodeQL checks, from that branch's own workflows.
+
+## Releasing
+
+A release starts as a pull request that sets the new version everywhere `tools/check_release.py versions` looks: `VERSION`, `pyproject.toml` in its PEP 440 form (`0.2.0b3` for `0.2.0-beta.3`), the fallback `__version__` in `src/release_rollup/__init__.py`, and a `## [x.y.z] - date` heading in `CHANGELOG.md` with its link at the bottom. After it merges, tag the merge commit and push the tag on its own:
+
+```sh
+git tag -a v0.2.0 <merge commit> -m "Release 0.2.0"
+git push origin v0.2.0
+```
+
+The tag has to be annotated, and it has to go up alone: a tag pushed together with a new branch didn't start the tag workflow. Tags matching `v*` can't be moved or deleted once pushed.
+
+The tag runs [`release.yml`](../.github/workflows/release.yml). It checks the versions against the tag, runs the tests, builds the zip with `tools/build_release.py`, attests it, and opens a draft release with the zip and `SHA256SUMS`, marked as a pre-release when the version has a `-`. The notes are written on the draft before it's published.
+
+To check a published zip, compare it with a local build of the tag and verify the attestation:
+
+```sh
+python3 tools/build_release.py --out rebuilt --ref v0.2.0
+gh attestation verify release-rollup-0.2.0.zip --repo Ghost-Hackers/release-rollup
+```
+
+`gh attestation verify` prints nothing when its output isn't a terminal, so check its exit code or pass `--format json`.
+
+`release/0.1.x` holds fixes for the 0.1 line; 0.1.1 shipped from it. Pull requests into it go through its own ruleset and its own workflows, and they don't close issues on merge, so close those by hand with "Done in #N". CI on master checks each new build against the newest published 0.1.x release with `tools/e2e.sh --cross`.
 
 ## Behavior
 
