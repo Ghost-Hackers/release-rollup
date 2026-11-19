@@ -103,7 +103,7 @@ When every changed file is Markdown or under `docs/`, the "Changed files" job re
 
 ## Releasing
 
-A release starts as a pull request that sets the new version everywhere `tools/check_release.py versions` looks: `VERSION`, `pyproject.toml` in its PEP 440 form (`0.2.0b3` for `0.2.0-beta.3`), the fallback `__version__` in `src/release_rollup/__init__.py`, and a `## [x.y.z] - date` heading in `CHANGELOG.md` with its link at the bottom. After it merges, tag the merge commit and push the tag on its own:
+A release starts as a pull request that sets the new version everywhere `tools/check_release.py versions` looks: `VERSION`, `src/release_rollup/VERSION`, `pyproject.toml` in its PEP 440 form (`0.2.0b3` for `0.2.0-beta.3`), the fallback `__version__` in `src/release_rollup/__init__.py`, and a `## [x.y.z] - date` heading in `CHANGELOG.md` with its link at the bottom. After it merges, tag the merge commit and push the tag on its own:
 
 ```sh
 git tag -a v0.2.0 <merge commit> -m "Release 0.2.0"
