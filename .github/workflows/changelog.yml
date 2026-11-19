@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@eade72a616f761781e2a0fc2cef27870e2692bfd (sha256 cfb74c3b4d755714f3be72cdd0d61f77b18018443058d02444ea0d65dbd5332e). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@5203ca51d5b16c9268881d795ac6c6d287a2c341 (sha256 2dfa74c23ce58a01de1da52752216a15a20fc1a8073889c90f4978881fcf2764). Edit it there, not here.
 name: 📝 Changelog entry
 
 on:
@@ -35,8 +35,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: 🔍 Check the changelog entry
-        # A change under the code paths needs a new line under "## [Unreleased]" unless the pull request has the
-        # skip label. The labels and the base branch come from the API, not the event: "opened" can arrive before
+        # A change under the code paths needs a new line under "## [Unreleased]", or in a version section the pull
+        # request adds, unless the pull request has the skip label. The labels and the base branch come from the API, not the event: "opened" can arrive before
         # the labels it was opened with are added, and a re-run replays the event as it was, so after a retarget it
         # still names the old base. A label can also land just after the check ran, so a failing check reads
         # the labels again for up to a minute before it fails. For a pull_request event the checkout is GitHub's
@@ -112,14 +112,17 @@ jobs:
                                     errors="surrogateescape")
 
 
-          def entries(text):
-              """The "- ..." and "* ..." lines between "## [Unreleased]" and the next "## " heading."""
-              found, inside = [], False
+          def sections(text):
+              """The "- ..." and "* ..." lines under each "## [...]" heading, by the name in the brackets."""
+              found, name = {}, None
               for line in text.splitlines():
                   if line.startswith("## "):
-                      inside = line.strip().lower() == "## [unreleased]"
-                  elif inside and re.match(r"\s*[-*] \S", line):
-                      found.append(" ".join(line.split()))
+                      heading = re.match(r"## \[([^\]]+)\]", line.strip())
+                      name = heading.group(1).strip().lower() if heading else None
+                      if name is not None:
+                          found.setdefault(name, [])
+                  elif name is not None and re.match(r"\s*[-*] \S", line):
+                      found[name].append(" ".join(line.split()))
               return found
 
 
@@ -149,13 +152,19 @@ jobs:
 
           def at(ref):
               shown = git("show", f"{ref}:{changelog}")
-              return entries(shown.stdout) if shown.returncode == 0 else None
+              return sections(shown.stdout) if shown.returncode == 0 else None
 
 
-          new = at(head)
-          if new is None:
+          after = at(head)
+          if after is None:
               fail(f"{changelog} does not exist in the pull request.")
-          old = at(start) or []
+          before = at(start) or {}
+          # Unreleased, and every version section only one side has: a release pull request turns Unreleased into a
+          # new version section, and renaming a section moves its lines without adding any. A line added to a version
+          # section the base already has doesn't count.
+          counted = {"unreleased"} | (before.keys() ^ after.keys())
+          new = [line for name in counted for line in after.get(name, [])]
+          old = [line for name in counted for line in before.get(name, [])]
           added = list(new)
           for line in old:
               if line in added:
@@ -171,7 +180,7 @@ jobs:
           # For the summary line, on one line and without Markdown: a file name can hold any of these.
           with open(os.environ["CHANGED_LIST"], "w", encoding="utf-8") as listed:
               listed.write(re.sub(r"[\x00-\x1f\x7f\x60*_<>\[\]|\\]", "?", shown))
-          fail(f'{shown} changed under {" ".join(paths)}, but "## [Unreleased]" in {changelog} has no new entry. '
+          fail(f'{shown} changed under {" ".join(paths)}, but {changelog} has no new entry under "## [Unreleased]" or a new version. '
                f'Add one, or put the "{label}" label on the pull request if users won\'t notice the change.')
           PY
           ) || rc=$?
