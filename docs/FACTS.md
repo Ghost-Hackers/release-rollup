@@ -114,12 +114,15 @@ The tag has to be annotated, and it has to go up alone: a tag pushed together wi
 
 The tag runs [`release.yml`](../.github/workflows/release.yml). It checks the versions against the tag, runs the tests, builds the zip with `tools/build_release.py`, attests it, and opens a draft release with the zip and `SHA256SUMS`, marked as a pre-release when the version has a `-`. The notes are written on the draft before it's published.
 
-To check a published zip, compare it with a local build of the tag and verify the attestation:
+To check a published zip, rebuild it from its tag, compare the sha256 and verify the attestation:
 
 ```sh
 python3 tools/build_release.py --out rebuilt --ref v0.2.0
+sha256sum release-rollup-0.2.0.zip rebuilt/release-rollup-0.2.0.zip
 gh attestation verify release-rollup-0.2.0.zip --repo Ghost-Hackers/release-rollup
 ```
+
+0.1.0, 0.2.0-beta.1 and 0.2.0-beta.2 were built locally before the release workflow existed, so they won't match a rebuild and have no attestation. [`SECURITY.md`](../SECURITY.md) says how to check those.
 
 `gh attestation verify` prints nothing when its output isn't a terminal, so check its exit code or pass `--format json`.
 
