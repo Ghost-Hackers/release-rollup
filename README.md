@@ -3,6 +3,7 @@
 [![CI](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/ci.yml/badge.svg)](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/codeql.yml/badge.svg)](https://github.com/Ghost-Hackers/release-rollup/actions/workflows/codeql.yml)
 [![Checked with Pyright](https://microsoft.github.io/pyright/img/pyright_badge.svg)](https://microsoft.github.io/pyright/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Ghost-Hackers/release-rollup/badge)](https://scorecard.dev/viewer/?uri=github.com/Ghost-Hackers/release-rollup)
 [![Latest release](https://img.shields.io/github/v/release/Ghost-Hackers/release-rollup?include_prereleases&sort=semver&label=release)](https://github.com/Ghost-Hackers/release-rollup/releases)
 [![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2FGhost-Hackers%2Frelease-rollup%2Fmaster%2Fpyproject.toml)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/Ghost-Hackers/release-rollup)](https://github.com/Ghost-Hackers/release-rollup/blob/master/LICENSE)
