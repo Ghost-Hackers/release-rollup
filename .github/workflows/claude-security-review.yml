@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@947a1fa2033ff629f2571702ffeb930d17b38c9d (sha256 d49d68bfc165439787adca6aea9ee07378c350188f8dc9244c6dd0c404a7574f). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@68741a8e8df796a5f595310a03793322d3d8500b (sha256 481341784efc9997231f3c1c77dc2872d7fc0cf4efce18d8dd97d5257f6004b7). Edit it there, not here.
 name: 🔒 Claude security review
 
 on:
@@ -473,7 +473,7 @@ jobs:
             Read `.pr-review/earlier-reviews.md` first, and don't repeat a point that is open or resolved.
 
             Return the structured result with the commit you reviewed, the count per severity and a short summary
-            of the findings, or "No findings." when there are none. Each finding in the summary is one line that starts
+            of the findings. With no findings, don't write a "No findings." line: the table above the summary says so. Each finding in the summary is one line that starts
             with its level emoji and severity, then its link, as `- ⚠️ P2 [`ci.yml:40`](…): …`. The summary links what it
             names the same way, each finding's `name:line` included. Apart from the findings, the "✅ Fixed since the last review" list, why a failed check failed and the Rules checked line, it says
             nothing about what you read, skipped or where you put a comment. End the summary with a line starting "Rules checked:" that names the
@@ -550,8 +550,13 @@ jobs:
             *) echo "::error::❌ The review summary doesn't end with a Rules checked line, so it can't show the project rules were read"
                exit 1 ;;
           esac
+          # Only the levels that have findings, so a clean result doesn't show a row of zeros next to the error icons.
+          counts=''
+          for level in "⛔ $p0" "❌ $p1" "⚠️ $p2" "ℹ️ $p3"; do
+            [ "${level##* }" -eq 0 ] || counts+="${counts:+ · }$level"
+          done
           {
-            echo "$overall $TITLE: ⛔ $p0 · ❌ $p1 · ⚠️ $p2 · ℹ️ $p3"
+            echo "$overall $TITLE: ${counts:-No findings}"
             echo
             echo "### $TITLE of ${HEAD_SHA:0:7} against $BASE at ${BASE_TIP:0:7}"
             echo
@@ -595,7 +600,7 @@ jobs:
           body=$(printf '<!-- %s -->\n![%s](https://img.shields.io/badge/%s-D97757?logo=claude&logoColor=white) **%s**\n\n%s\n%s\n| %s | %s | \x60%s\x60 | %s \x60%s\x60 | %s |\n\n%s\n' \
             "$MARKER" "$BADGE" "${BADGE// /%20}" "$headline" \
             "| Review | Result | Commit | Against | Trigger |" "| --- | --- | --- | --- | --- |" \
-            "$REVIEW" "$overall ⛔ $p0 · ❌ $p1 · ⚠️ $p2 · ℹ️ $p3" "${HEAD_SHA:0:7}" "$base_cell" "${BASE_TIP:0:7}" "$trigger" \
+            "$REVIEW" "${counts:-✅ No findings}" "${HEAD_SHA:0:7}" "$base_cell" "${BASE_TIP:0:7}" "$trigger" \
             "$summary")
           id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id" | tail -n 1)
@@ -610,8 +615,8 @@ jobs:
           fi
 
   # Runs after every outcome once the Availability job ran, a skipped or failed review included. Only a review of the
-  # current head with no findings keeps or adds the clean mark; anything else removes it. A cancelled review was replaced
-  # by a newer run, which owns the reactions by then, so this job leaves them alone.
+  # current head with no findings replaces or adds the clean mark; anything else removes it. A cancelled review was
+  # replaced by a newer run, which owns the reactions by then, so this job leaves them alone.
   react-end:
     name: Mark result
     needs: [available, security, react-start]
@@ -686,13 +691,14 @@ jobs:
           reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
             --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content) \(.created_at)"') \
             || { echo "::warning::⚠️ The review reactions couldn't be listed"; reactions=; }
-          kept=
           while read -r id content created; do
             [ -n "$id" ] || continue
             drop=
             case "$content" in
               "$RUNNING") if [ -z "$moved" ]; then drop=1; fi ;;
-              "$CLEAN") if [ -n "$clean" ]; then kept=1; else drop=1; fi ;;
+              # A clean review replaces its clean mark rather than keeping one from an earlier head: GitHub returns
+              # the existing reaction to a second POST, and the cleanups judge a mark by when it was set.
+              "$CLEAN") drop=1 ;;
               "$STALE") if ! [[ "$created" > "$STALE_BEFORE" ]]; then drop=1; fi ;;
             esac
             if [ -n "$drop" ]; then
@@ -703,9 +709,10 @@ jobs:
               fi
             fi
           done <<<"$reactions"
-          if [ -n "$clean" ] && [ -z "$kept" ]; then
+          if [ -n "$clean" ]; then
             if id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$CLEAN" --jq .id); then
-              added+=" $CLEAN"
+              # A replaced mark is set again, not removed.
+              added+=" $CLEAN" removed=${removed/" $CLEAN"/}
               # A push between the head check above and the mark leaves it on a head nobody reviewed, though it's newer
               # than the push. A push after this second check is no older than the mark, and that push's run removes it.
               head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) || head_now=
