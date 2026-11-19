@@ -5,7 +5,8 @@ name: Labeler
 # base branch, and nothing from the pull request runs.
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    # edited covers a pull request moved to another base branch, which changes its files.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
