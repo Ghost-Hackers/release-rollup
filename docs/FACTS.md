@@ -30,7 +30,7 @@ On Windows `python3` is the Microsoft Store shortcut, so pass the real interpret
 
 `check.sh` needs:
 
-- coverage.py 7.17.3, the version CI pins: `python3 -m pip install coverage==7.17.3`
+- coverage.py 7.17.3: `python3 -m pip install coverage==7.17.3`. CI installs the same version from [`tools/ci-requirements.txt`](../tools/ci-requirements.txt), pinned by hash, and a test fails when the two versions differ.
 - `RR_SMALLFS`, a folder on a filesystem of a few MB, for the tests that fill a disk. On Linux `check.sh` makes one itself, a 4 MB tmpfs in a private mount namespace. On Windows set it to a folder on a small NTFS drive (CI uses an 8 MB VHD).
 - on Windows, `RR_NOLINKS_FS`, a folder on a FAT32 drive, for the tests of a filesystem without hard links
 - a normal user. Root reads past file permissions, so the tests that lock files can't see the refusal they check for, and `check.sh` stops when run as root.
@@ -112,7 +112,7 @@ git push origin v0.2.0
 
 The tag has to be annotated, and it has to go up alone: a tag pushed together with a new branch didn't start the tag workflow. Tags matching `v*` can't be moved or deleted once pushed.
 
-The tag runs [`release.yml`](../.github/workflows/release.yml). It checks the versions against the tag, runs the tests, builds the zip with `tools/build_release.py`, attests it, and opens a draft release with the zip and `SHA256SUMS`, marked as a pre-release when the version has a `-`. The notes are written on the draft before it's published.
+The tag runs [`release.yml`](../.github/workflows/release.yml). It checks the versions against the tag, runs the tests, builds the zip with `tools/build_release.py`, attests it, and opens a draft release with the zip, `SHA256SUMS` and the attestation bundle `release-rollup-<version>.zip.sigstore.json`, marked as a pre-release when the version has a `-`. The notes are written on the draft before it's published.
 
 To check a published zip, rebuild it from its tag, compare the two zips and verify the attestation. `cmp` prints nothing and exits 0 when they match:
 

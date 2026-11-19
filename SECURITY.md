@@ -18,7 +18,13 @@ Every release after 0.2.0-beta.2 has its zip built on GitHub from its tag, with 
 gh attestation verify release-rollup-<version>.zip --repo Ghost-Hackers/release-rollup
 ```
 
-It passes only for the exact file the release workflow built. To check that the download wasn't damaged, run `sha256sum -c SHA256SUMS` in the folder that holds both files.
+It passes only for the exact file the release workflow built. Releases after 0.2.0-beta.3 also carry the attestation as `release-rollup-<version>.zip.sigstore.json`, which checks the zip without asking GitHub for it:
+
+```sh
+gh attestation verify release-rollup-<version>.zip --bundle release-rollup-<version>.zip.sigstore.json --repo Ghost-Hackers/release-rollup
+```
+
+To check that the download wasn't damaged, run `sha256sum -c SHA256SUMS` in the folder that holds the zip and `SHA256SUMS`.
 
 You can also rebuild the zip yourself from a clone and compare:
 

@@ -57,7 +57,7 @@ jobs:
 
       - name: Install coverage.py
         if: env.CODE != 'false'
-        run: python -m pip install coverage==7.17.3
+        run: python -m pip install --require-hashes -r tools/ci-requirements.txt
 
       # Some tests fill the disk they write to (tests/smallfs.py). They need RR_SMALLFS, a folder on a
       # filesystem of a few MB, and fail without it. Both steps below export it for the later steps.
