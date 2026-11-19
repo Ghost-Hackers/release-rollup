@@ -30,7 +30,7 @@ On Windows `python3` is the Microsoft Store shortcut, so pass the real interpret
 
 `check.sh` needs:
 
-- coverage.py 7.17.3, the version CI pins: `python3 -m pip install coverage==7.17.3`
+- coverage.py 7.17.3: `python3 -m pip install coverage==7.17.3`. CI installs the same version from [`tools/ci-requirements.txt`](../tools/ci-requirements.txt), pinned by hash, and a test fails when the two versions differ.
 - `RR_SMALLFS`, a folder on a filesystem of a few MB, for the tests that fill a disk. On Linux `check.sh` makes one itself, a 4 MB tmpfs in a private mount namespace. On Windows set it to a folder on a small NTFS drive (CI uses an 8 MB VHD).
 - on Windows, `RR_NOLINKS_FS`, a folder on a FAT32 drive, for the tests of a filesystem without hard links
 - a normal user. Root reads past file permissions, so the tests that lock files can't see the refusal they check for, and `check.sh` stops when run as root.

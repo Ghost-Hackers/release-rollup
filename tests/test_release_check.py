@@ -1,6 +1,7 @@
 """tools/check_release.py on temp folders and temp git repositories."""
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -140,6 +141,16 @@ class Versions(unittest.TestCase):
 
     def test_this_repository_passes(self) -> None:
         self.assertEqual(check_release.check_versions(os.path.join(HERE, '..')), [])
+
+    def test_ci_coverage_pin_matches_check_sh(self) -> None:
+        # CI installs coverage.py from tools/ci-requirements.txt by hash; check.sh asks for a version.
+        root = os.path.join(HERE, '..')
+        with open(os.path.join(root, 'tools', 'check.sh'), encoding='utf-8') as f:
+            want = re.search(r'^COVERAGE_VERSION=(\S+)$', f.read(), re.M)
+        with open(os.path.join(root, 'tools', 'ci-requirements.txt'), encoding='utf-8') as f:
+            pins = re.findall(r'^coverage==(\S+)', f.read(), re.M)
+        assert want is not None
+        self.assertEqual(pins, [want.group(1)])
 
 
 load_tests = hostcat.load_tests
