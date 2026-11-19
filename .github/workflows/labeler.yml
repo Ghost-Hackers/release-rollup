@@ -19,3 +19,6 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          # Take an area label off again when the change no longer touches its files.
+          sync-labels: true

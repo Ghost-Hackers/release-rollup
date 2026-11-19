@@ -1,5 +1,6 @@
-# Area labels added to pull requests from the files they change. Type labels such as bug and
-# feature stay manual, since they depend on what the change is for.
+# Area labels added to pull requests from the files they change, and removed when a change no
+# longer touches them. They follow the files only, so a label added by hand is taken off on the
+# next push. Type labels such as bug and feature stay manual.
 "area: core":
   - changed-files:
       - any-glob-to-any-file:
@@ -21,7 +22,6 @@
       - any-glob-to-any-file:
           - tests/test_windows.py
           - tests/lowrights.py
-          - tests/hosts.tsv
 "area: ci":
   - changed-files:
       - any-glob-to-any-file:
