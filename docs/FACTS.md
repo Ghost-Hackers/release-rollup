@@ -112,7 +112,7 @@ git push origin v0.2.0
 
 The tag has to be annotated, and it has to go up alone: a tag pushed together with a new branch didn't start the tag workflow. Tags matching `v*` can't be moved or deleted once pushed.
 
-The tag runs [`release.yml`](../.github/workflows/release.yml). It checks the versions against the tag, runs the tests, builds the zip with `tools/build_release.py`, attests it, and opens a draft release with the zip and `SHA256SUMS`, marked as a pre-release when the version has a `-`. The notes are written on the draft before it's published.
+The tag runs [`release.yml`](../.github/workflows/release.yml). It checks the versions against the tag, runs the tests, builds the zip with `tools/build_release.py`, attests it, and opens a draft release with the zip, `SHA256SUMS` and the attestation bundle `release-rollup-<version>.zip.sigstore.json`, marked as a pre-release when the version has a `-`. The notes are written on the draft before it's published.
 
 To check a published zip, rebuild it from its tag, compare the two zips and verify the attestation. `cmp` prints nothing and exits 0 when they match:
 
