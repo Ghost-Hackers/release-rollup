@@ -24,7 +24,7 @@ It passes only for the exact file the release workflow built. Releases after 0.2
 gh attestation verify release-rollup-<version>.zip --bundle release-rollup-<version>.zip.sigstore.json --repo Ghost-Hackers/release-rollup
 ```
 
-To check that the download wasn't damaged, run `sha256sum -c SHA256SUMS` in the folder that holds both files.
+To check that the download wasn't damaged, run `sha256sum -c SHA256SUMS` in the folder that holds the zip and `SHA256SUMS`.
 
 You can also rebuild the zip yourself from a clone and compare:
 
