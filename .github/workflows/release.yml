@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a version tag builds the release zip from that tag, attests it and opens a draft
-# release with the zip and SHA256SUMS attached. The notes are written and the draft is
+# release with the zip, SHA256SUMS and the attestation bundle attached. The notes are written and the draft is
 # published by hand.
 on:
   push:
