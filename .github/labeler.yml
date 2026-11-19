@@ -1,0 +1,30 @@
+# Area labels added to pull requests from the files they change. Type labels such as bug and
+# feature stay manual, since they depend on what the change is for.
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/release_rollup/core.py
+          - src/release_rollup/container.py
+"area: cli":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/release_rollup/cli.py
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - README.md
+          - docs/**
+          - CHANGELOG.md
+          - SECURITY.md
+"area: windows":
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/test_windows.py
+          - tests/lowrights.py
+          - tests/hosts.tsv
+"area: ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+          - .github/dependabot.yml
+          - .github/labeler.yml

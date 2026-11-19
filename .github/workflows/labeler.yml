@@ -1,0 +1,21 @@
+name: Labeler
+
+# Adds the area labels from .github/labeler.yml. pull_request_target, so pull requests from forks
+# get labels too: the action reads the changed file names from the API and the config from the
+# base branch, and nothing from the pull request runs.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    name: Area labels
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
