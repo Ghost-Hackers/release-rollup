@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@eade72a616f761781e2a0fc2cef27870e2692bfd (sha256 4de2d11f3eb23f5853acf2267332f387fac0ad7b40950abcf234700d24637ffb). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@3044a46c42e64b1b49d4973131f4a9f491e48c2a (sha256 00d13c2e2635ccc87d8e6406d0e6638900e102359aa4e6db6d5d960d0aa6e4ec). Edit it there, not here.
 name: 🔒 Claude security review
 
 on:
@@ -177,6 +177,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUNNING: rocket
           STALE: ""
+          # When the head moved on, to the second. A review of the new head can't finish in that second, so a clean mark
+          # from it or earlier is the old head's. Without a time nothing counts as older.
+          STALE_BEFORE: ""
         run: |
           # One line in the run summary, whatever happens below.
           added='' removed=''
@@ -203,11 +206,11 @@ jobs:
           fi
           if [ -n "$STALE" ]; then
             reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content)"') \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content) \(.created_at)"') \
             || { echo "::warning::⚠️ The review reactions couldn't be listed"; reactions=; }
-            while read -r id content; do
+            while read -r id content created; do
               [ -n "$id" ] || continue
-              if [ "$content" = "$STALE" ]; then
+              if [ "$content" = "$STALE" ] && ! [[ "$created" > "$STALE_BEFORE" ]]; then
                 if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
                   removed+=" $content"
                 else
@@ -630,6 +633,9 @@ jobs:
           RUNNING: rocket
           CLEAN: "hooray"
           STALE: ""
+          # When the head moved on, to the second. A review of the new head can't finish in that second, so a clean mark
+          # from it or earlier is the old head's. Without a time nothing counts as older.
+          STALE_BEFORE: ""
           # A result that failed its own checks counts as unknown, so it gets no clean mark.
           FINDINGS: ${{ needs.security.result == 'success' && needs.security.outputs.findings || '' }}
           HEAD_SHA: ${{ needs.security.outputs.sha }}
@@ -650,16 +656,16 @@ jobs:
             if [ -n "$HEAD_SHA" ] && [ "$head_now" = "$HEAD_SHA" ]; then clean=1; fi
           fi
           reactions=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content)"') \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id) \(.content) \(.created_at)"') \
             || { echo "::warning::⚠️ The review reactions couldn't be listed"; reactions=; }
           kept=
-          while read -r id content; do
+          while read -r id content created; do
             [ -n "$id" ] || continue
             drop=
             case "$content" in
               "$RUNNING") drop=1 ;;
               "$CLEAN") if [ -n "$clean" ]; then kept=1; else drop=1; fi ;;
-              "$STALE") drop=1 ;;
+              "$STALE") if ! [[ "$created" > "$STALE_BEFORE" ]]; then drop=1; fi ;;
             esac
             if [ -n "$drop" ]; then
               if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
@@ -670,8 +676,23 @@ jobs:
             fi
           done <<<"$reactions"
           if [ -n "$clean" ] && [ -z "$kept" ]; then
-            if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$CLEAN" >/dev/null; then
+            if id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$CLEAN" --jq .id); then
               added+=" $CLEAN"
+              # A push between the head check above and the mark leaves it on a head nobody reviewed, though it's newer
+              # than the push. A push after this second check is no older than the mark, and that push's run removes it.
+              head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) || head_now=
+              if [ "$head_now" != "$HEAD_SHA" ]; then
+                if [ -n "$head_now" ]; then
+                  echo "The head moved on to $head_now during the review, so the $CLEAN reaction is taken back"
+                else
+                  echo "::warning::⚠️ The head commit couldn't be read again, so the $CLEAN reaction is taken back"
+                fi
+                if [ -n "$id" ] && gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
+                  added=${added% "$CLEAN"} removed+=" $CLEAN"
+                else
+                  echo "::warning::⚠️ The $CLEAN reaction on a head that moved on wasn't removed"
+                fi
+              fi
             else
               echo "::warning::⚠️ The $CLEAN reaction wasn't added"
             fi
