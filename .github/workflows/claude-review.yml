@@ -1,4 +1,4 @@
-# Copied from Ghost-Hackers/ci-workflows@5203ca51d5b16c9268881d795ac6c6d287a2c341 (sha256 cd4ebd75c7aa23939795984858238aacb8d9b38942a96a7f0d0e5ceac7d33e98). Edit it there, not here.
+# Copied from Ghost-Hackers/ci-workflows@984a367c7f187b3aef152492689dbb24a7115308 (sha256 40c49a8bd62e5d8781018e93e8e688c68a07c13dd72922a14a5afb755c015a82). Edit it there, not here.
 name: 🤖 Claude review
 
 on:
@@ -151,9 +151,14 @@ jobs:
             if [ -n "$keep" ]; then
               gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$keep" -f body="$body" >/dev/null \
                 || echo "::warning::⚠️ The couldn't-run comment wasn't updated"
+            elif gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null; then
+              # Two runs that found no comment can both post one. Each lists them again and keeps only the newest.
+              ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
+                --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- $MARKER -->\"))) | .id") \
+                || { echo "::warning::⚠️ The couldn't-run comments couldn't be listed again"; ids=; }
+              keep=$(printf '%s\n' "$ids" | tail -n 1)
             else
-              gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null \
-                || echo "::warning::⚠️ The couldn't-run comment wasn't posted"
+              echo "::warning::⚠️ The couldn't-run comment wasn't posted"
             fi
           fi
           # An answer makes every earlier comment out of date; a failure keeps only the newest, updated above.
@@ -232,6 +237,19 @@ jobs:
               *) echo "::warning::⚠️ The $1 comment couldn't be read, so its clean mark stays"; return 1 ;;
             esac
           }
+          # The other review can write a clean result for this head between the check above and a removal. Its
+          # Mark result then sees the mark still there and won't post it, so it goes back on here.
+          restore() {
+            local last
+            last=$(shown "$2")
+            if [[ "$last" == *" clean" && "$head_now" == "${last%% *}"* ]]; then
+              if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$1" >/dev/null; then
+                added+=" $1" removed=${removed/" $1"/}
+              else
+                echo "::warning::⚠️ The $1 reaction wasn't put back"
+              fi
+            fi
+          }
           head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) \
             || { echo "::warning::⚠️ The head commit couldn't be read, so the clean marks stay"; head_now=; }
           if [ -n "$head_now" ]; then
@@ -243,6 +261,7 @@ jobs:
                 if [ -n "$id" ] && [ "$content" = "${pair%%=*}" ] && stale "${pair#*=}"; then
                   if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
                     removed+=" $content"
+                    restore "$content" "${pair#*=}"
                   else
                     echo "::warning::⚠️ The $content reaction wasn't removed"
                   fi
@@ -550,6 +569,8 @@ jobs:
           NUMBER: ${{ steps.pr.outputs.number }}
           GH_TOKEN: ${{ github.token }}
           MARKER: claude-review
+          # Whether a push starts a run of this review, which then writes the comment for the new head.
+          NEWER_RUN_WRITES: "true"
           TITLE: Claude review
           RETRY: push to the pull request to review it against the new base
           BADGE: Claude review
@@ -667,24 +688,37 @@ jobs:
           comments=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" --jq "$filter") || comments=
           last=${comments##*$'\n'}
           id=${last%% *} shown=${last#* }
-          # Every run of this review shares the comment. A run of a newer head may already have written its result
-          # there, and this result of an older head must not replace it. Any older result is replaced as usual.
-          if [ "$head_now" != "$HEAD_SHA" ] && [[ "$shown" =~ ^[0-9a-f]{7,40}$ && "$head_now" == "$shown"* ]]; then
-            moved="The head moved on to ${head_now:0:7} during the review and the review comment already shows its result, so it is left as it is"
+          # Every run of this review shares the comment, and this result of an older head must not replace a newer
+          # one. When a push starts a run of this review, that run writes the comment, so this one leaves it alone:
+          # checking the comment first would still race a newer run that writes it a moment later. A push to a draft
+          # starts none, and a draft that can't be read counts as one. Otherwise only a comment that already shows
+          # the new head is kept.
+          newer=''
+          if [ "$head_now" != "$HEAD_SHA" ] && [ -n "$NEWER_RUN_WRITES" ]; then
+            draft=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft) || draft=true
+            [ "$draft" = true ] || newer=1
+          fi
+          if [ "$head_now" != "$HEAD_SHA" ] && { [ -n "$newer" ] \
+            || [[ "$shown" =~ ^[0-9a-f]{7,40}$ && "$head_now" == "$shown"* ]]; }; then
+            moved="The head moved on to ${head_now:0:7} during the review, so the review comment is left to the review of that head"
             echo "::notice::ℹ️ $moved"
             { echo; echo "$moved"; } >> "$GITHUB_STEP_SUMMARY"
           elif [ -n "$id" ]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" >/dev/null
           else
             gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -f body="$body" >/dev/null
-            # Two runs that found no comment can both post one. Each keeps only the newest, so they end up with one.
-            ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" --jq "$filter" | cut -d ' ' -f 1 | sort -n) \
-              || ids=
-            while read -r extra; do
-              [ -n "$extra" ] || continue
+            # Two runs that found no comment can both post one, and an older head's run may post last. Each keeps the
+            # newest comment for the current head, or the newest of all when none shows it, so they keep the same one.
+            all=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" --jq "$filter" | sort -n) || all=
+            keep=$(while read -r cid sha; do
+                if [[ "$sha" =~ ^[0-9a-f]{7,40}$ && "$head_now" == "$sha"* ]]; then echo "$cid"; fi
+              done <<<"$all" | tail -n 1)
+            [ -n "$keep" ] || keep=$(tail -n 1 <<<"$all" | cut -d ' ' -f 1)
+            while read -r extra _; do
+              [ -n "$extra" ] && [ "$extra" != "$keep" ] || continue
               gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$extra" >/dev/null \
                 || echo "::warning::⚠️ The extra $MARKER comment $extra wasn't removed"
-            done < <(head -n -1 <<<"$ids")
+            done <<<"$all"
           fi
           if [ $((p0 + p1)) -gt 0 ]; then
             echo "::error::❌ $p0 P0 and $p1 P1 findings must be fixed before merging"
@@ -720,6 +754,9 @@ jobs:
           # Mark started's step name in every run of this review on this pull request, and the review job's name.
           MARK_STEP: "🏷️ Mark #${{ github.event.pull_request.number || github.event.issue.number }} as in review"
           REVIEW_JOB: Review
+          # The security review's clean mark, with its comment's marker: a push starts no security review, and a
+          # push while Claude can't run skips Mark started, so this job drops the mark once it's stale.
+          CLEAN_MARKS: hooray=claude-security-review
           REVIEW_RESULT: ${{ needs.review.result }}
           # A result that failed its own checks counts as unknown, so it gets no clean mark.
           FINDINGS: ${{ needs.review.result == 'success' && needs.review.outputs.findings || '' }}
@@ -749,6 +786,29 @@ jobs:
               || out=
             out=${out##*$'\n'}
             case "$out" in -|"") ;; *) echo "$out" ;; esac
+          }
+          # A clean mark belongs to the commit its review's comment shows, and goes once the head moves on from it. A
+          # comment that can't be read leaves the mark, since nothing else tells which commit it was given for.
+          stale() {
+            local last
+            last=$(shown "$1")
+            case "$last" in
+              [0-9a-f]*" "*) [[ "$head_now" != "${last%% *}"* ]] ;;
+              *) echo "::warning::⚠️ The $1 comment couldn't be read, so its clean mark stays"; return 1 ;;
+            esac
+          }
+          # The other review can write a clean result for this head between the check above and a removal. Its
+          # Mark result then sees the mark still there and won't post it, so it goes back on here.
+          restore() {
+            local last
+            last=$(shown "$2")
+            if [[ "$last" == *" clean" && "$head_now" == "${last%% *}"* ]]; then
+              if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$1" >/dev/null; then
+                added+=" $1" removed=${removed/" $1"/}
+              else
+                echo "::warning::⚠️ The $1 reaction wasn't put back"
+              fi
+            fi
           }
           # Whether another run of this review still holds the running mark: a run of the same caller whose Mark
           # started step for this pull request ran and whose review hasn't finished. A run whose Mark started hasn't run
@@ -793,7 +853,7 @@ jobs:
           has_clean=''
           while read -r id content; do
             [ -n "$id" ] || continue
-            drop=''
+            drop='' foreign=''
             case "$content" in
               "$RUNNING")
                 if held; then
@@ -811,10 +871,21 @@ jobs:
                   echo "::warning::⚠️ The $MARKER comment couldn't be read, so the $CLEAN reaction stays"
                 fi
                 ;;
+              *)
+                # Another review's clean mark goes once it's stale, as in Mark started, which a run that couldn't
+                # review skips. The security review sets no CLEAN_MARKS, so there this does nothing: the code review's
+                # own jobs look after its clean mark.
+                for pair in $CLEAN_MARKS; do
+                  if [ -n "$head_now" ] && [ "$content" = "${pair%%=*}" ] && stale "${pair#*=}"; then
+                    drop=1 foreign=${pair#*=}
+                  fi
+                done
+                ;;
             esac
             if [ -n "$drop" ]; then
               if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
                 removed+=" $content"
+                [ -z "$foreign" ] || restore "$content" "$foreign"
               else
                 echo "::warning::⚠️ The $content reaction wasn't removed"
               fi
@@ -912,6 +983,19 @@ jobs:
               *) echo "::warning::⚠️ The $1 comment couldn't be read, so its clean mark stays"; return 1 ;;
             esac
           }
+          # The other review can write a clean result for this head between the check above and a removal. Its
+          # Mark result then sees the mark still there and won't post it, so it goes back on here.
+          restore() {
+            local last
+            last=$(shown "$2")
+            if [[ "$last" == *" clean" && "$head_now" == "${last%% *}"* ]]; then
+              if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions" -f content="$1" >/dev/null; then
+                added+=" $1" removed=${removed/" $1"/}
+              else
+                echo "::warning::⚠️ The $1 reaction wasn't put back"
+              fi
+            fi
+          }
           head_now=$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid) \
             || { echo "::warning::⚠️ The head commit couldn't be read, so the clean marks stay"; head_now=; }
           if [ -n "$head_now" ]; then
@@ -923,6 +1007,7 @@ jobs:
                 if [ -n "$id" ] && [ "$content" = "${pair%%=*}" ] && stale "${pair#*=}"; then
                   if gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$NUMBER/reactions/$id" >/dev/null; then
                     removed+=" $content"
+                    restore "$content" "${pair#*=}"
                   else
                     echo "::warning::⚠️ The $content reaction wasn't removed"
                   fi
