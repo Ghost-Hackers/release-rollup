@@ -58,9 +58,20 @@ jobs:
         run: python tools/build_release.py --out dist
 
       - name: Attest the zip
+        id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/*.zip
+
+      - name: Add the attestation bundle
+        # Goes on the release next to the zip, so the zip can be verified without asking GitHub
+        # for the attestation: gh attestation verify <zip> --bundle <zip>.sigstore.json
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          zips=(dist/*.zip)
+          [ "${#zips[@]}" -eq 1 ] || { echo "::error::Expected one zip in dist/, found ${#zips[@]}"; exit 1; }
+          cp "$BUNDLE" "${zips[0]}.sigstore.json"
 
       - name: Keep the files for the release job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
