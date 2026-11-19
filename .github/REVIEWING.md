@@ -32,4 +32,6 @@ Paths from zips, manifests and arguments stay inside the folder given. `..`, abs
 
 Comments, docs, commit messages and pull request text read like a developer wrote them: short and plain, saying what the code does or why. No em dashes or emoji, no openers that announce and no closing summaries. Words to leave out: seamless, robust, comprehensive, leverage, utilize, ensure, streamline, delve, crucial, essential, facilitate, enhance, showcase, various. Tests are described by what they check, never as real or not.
 
+Files copied from Ghost-Hackers/ci-workflows, the ones listed in `.github/ci-workflows-copy.txt`, follow that repo's style, emoji included. Their wording is changed there and synced, so it isn't a finding here. Bugs in them still are.
+
 [![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#reviewing)
