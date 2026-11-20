@@ -10,6 +10,7 @@
 - [restore](#restore)
 - [upgrade](#upgrade)
 - [archive](#archive)
+- [One run per folder](#one-run-per-folder)
 - [Example](#example)
 - [Exit codes](#exit-codes)
 
@@ -200,12 +201,26 @@ would trash v0.2.0-rc.5 (release 0.2.0 is published)
 
 Run it again and it prints `nothing to do`.
 
+## One run per folder
+
+`run`, `pre`, `upgrade` and `archive` lock the `--root` folder while they work, so two runs can't move the same files at once. A second run on a folder that is in use stops before it changes anything:
+
+```text
+error: /srv/releases/.release-rollup.lock is held by another run (pid 4711 on buildbox, started 2026-11-19T12:00:00Z); nothing was changed
+```
+
+The lock is an OS file lock on `.release-rollup.lock` in the root folder, and the file holds one line with the pid, host and start time of the run that has it. The file is removed when the run ends. If a run is killed, the OS lets go of its lock at once; the next run finds the old line, prints `cleared a stale lock in ... left by a run that ended without releasing it (...)` and goes on. Nothing has to be deleted by hand.
+
+`--dry-run` changes nothing, so it takes no lock and works while another run holds the folder. `restore` is not locked: it only writes into a new `--out` folder. `archive` locks only `--root`, so two archive runs with different roots and the same `--out` elsewhere are not kept apart. A folder the lock file can't be made in (read-only, or a full disk) is refused with `cannot lock`.
+
+The lock is only as good as the file system's locking. On local disks it holds; on a network share (NFS, SMB) it depends on how the share is mounted.
+
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | Done, or nothing to do |
-| 1 | A zip failed its check, an existing archive could not be read, a file name was refused (Windows names, or one the system cannot open), a `restore` was refused, an `upgrade` refused a zip, or there is no way to trash files. Sources are left in place |
+| 1 | A zip failed its check, an existing archive could not be read, a file name was refused (Windows names, or one the system cannot open), a `restore` was refused, an `upgrade` refused a zip, or there is no way to trash files. Also when another run holds the folder, or the lock file can't be made. Sources are left in place |
 | 2 | Bad command line, or `--root` is not a folder |
 
 [![Back to top](https://img.shields.io/badge/Back%20to%20top-222?style=plastic&logo=github)](#usage)

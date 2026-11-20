@@ -80,6 +80,8 @@ release-rollup restore releases/0.1.zip --out restored
 | `upgrade` | Turn plain rollup zips into deduplicated ones |
 | `archive` | Roll the files of a folder into one deduplicated archive |
 
+Only one run works on a folder at a time. A second `run`, `pre`, `upgrade` or `archive` on the same folder stops with an error and changes nothing; `--dry-run` and `restore` are not held back. See [One run per folder](docs/usage.md#one-run-per-folder).
+
 ## Documentation
 
 | Document | What's in it |

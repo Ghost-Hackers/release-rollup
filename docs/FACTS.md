@@ -154,6 +154,11 @@ General:
 - The symlink tests create symlinks on both systems. On Windows that needs Developer Mode or an elevated shell, and the tests fail without it.
 - Zip members have a fixed 1980-01-01 timestamp and mode 0644, and are sorted by name.
 - The temporary zip is named `.<target>.<random>.tmp` in the releases folder and is removed on failure.
+- `run`, `pre`, `upgrade` and `archive` lock `--root` in `cli.main` (`src/release_rollup/lock.py`), not in the core functions, so tests that call `core.apply()` and the like take no lock. `--dry-run` and `restore` take none. `archive` locks only `--root`, not `--out`.
+- The lock file is `<root>/.release-rollup.lock` with one line, `pid=<n> host=<name> started=<UTC time>`. Linux and macOS use `fcntl.flock`, which is tied to the open file and not dropped when another descriptor on it closes, as `lockf` would be. Windows uses `msvcrt.locking` on one byte at offset 1 MiB: a Windows byte lock stops other processes reading that byte, so it sits past the record, which stays readable for the refusal message.
+- The OS drops the lock when the process dies. A run that gets the lock and finds a record in the file clears it as stale. An empty file is taken as free without a word.
+- On Linux the lock file is removed while the lock is still held, and a run that got the lock on a file that was removed meanwhile starts over (`_ours()` compares device and inode). Windows can't remove an open file, so it closes first and then removes it; if another process has the file open the removal fails and the empty file stays.
+- Windows drops the locks of a killed process soon after it ends, not always at once, so the stale lock test retries for up to 30 seconds while the run is refused.
 - A directory marker needs a trailing slash (`--marker assets/`). Without it the marker must be a file.
 - Version comparison is numeric on the three parts, so 0.10.0 sorts above 0.9.0.
 - Three beta builds of one app (15 files, 41,026,579 bytes unpacked) come to 13,698,897 bytes deduplicated, in 113 entries.
