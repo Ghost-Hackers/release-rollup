@@ -10,6 +10,7 @@ import datetime
 import os
 import re
 import socket
+import stat
 import sys
 from collections.abc import Callable, Generator
 
@@ -24,7 +25,7 @@ if sys.platform == 'win32':
     # A Windows byte lock is mandatory: no other process can read the locked byte. Locking one byte far past the
     # record keeps the record readable for the run that gets refused.
     _AT = 1 << 20
-    _FLAGS = os.O_RDWR | os.O_CREAT | os.O_BINARY
+    _FLAGS = os.O_RDWR | os.O_BINARY | os.O_NOINHERIT
 
     def _try_lock(fd: int) -> bool:
         os.lseek(fd, _AT, os.SEEK_SET)
@@ -37,16 +38,18 @@ if sys.platform == 'win32':
     def _release(fd: int, path: str) -> None:
         # Windows can't remove an open file, so close it first. A run that opened it in the meantime keeps it from
         # being removed; it stays behind empty, and the next run takes an empty file as free.
-        os.ftruncate(fd, 0)
-        os.lseek(fd, _AT, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        os.close(fd)
+        try:
+            os.ftruncate(fd, 0)
+            os.lseek(fd, _AT, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
         with contextlib.suppress(OSError):
             os.remove(path)
 else:
     import fcntl
 
-    _FLAGS = os.O_RDWR | os.O_CREAT
+    _FLAGS = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
 
     def _try_lock(fd: int) -> bool:
         try:
@@ -58,9 +61,11 @@ else:
     def _release(fd: int, path: str) -> None:
         # Remove the file while the lock is still held. A run that opened it just before gets the lock on a removed
         # file once we close, sees that in _ours() and starts over on a new one.
-        if _ours(fd, path):
-            os.remove(path)
-        os.close(fd)
+        try:
+            if _ours(fd, path):
+                os.remove(path)
+        finally:
+            os.close(fd)
 
 
 def _ours(fd: int, path: str) -> bool:
@@ -84,19 +89,48 @@ def _owner(record: str) -> str:
     return ' (pid %s on %s, started %s)' % m.groups() if m else ''
 
 
+def _plain(st: os.stat_result) -> bool:
+    """Whether st is a regular file with no other name and no reparse point, so writing to it reaches nothing else."""
+    return (stat.S_ISREG(st.st_mode) and st.st_nlink == 1
+            and not getattr(st, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
 def _acquire(path: str) -> int:
-    """Open and lock path. Raises Fail when another run holds it."""
+    """Open and lock path. Raises Fail when another run holds it or when path is a link or anything but a plain
+    file, before reading or writing it."""
     while True:
-        fd = os.open(path, _FLAGS, 0o644)
         try:
+            seen = os.lstat(path)
+        except FileNotFoundError:
+            seen = None
+        if seen is not None and not _plain(seen):
+            raise Fail('%s is not a plain file; nothing was changed' % path)
+        # A new file is made with O_EXCL, which never follows a link. An existing one is opened without O_CREAT,
+        # with O_NOFOLLOW where the OS has it; Windows follows links in os.open, so the fstat check below catches a
+        # file swapped for a link since the lstat.
+        flags = _FLAGS | os.O_CREAT | os.O_EXCL if seen is None else _FLAGS
+        try:
+            fd = os.open(path, flags, 0o600)
+        except (FileExistsError, FileNotFoundError):
+            continue
+        kept = False
+        try:
+            if seen is not None:
+                mine = os.fstat(fd)
+                if (mine.st_dev, mine.st_ino) != (seen.st_dev, seen.st_ino):
+                    continue
             if not _try_lock(fd):
                 raise Fail('%s is held by another run%s; nothing was changed' % (path, _owner(_read(fd))))
-            if _ours(fd, path):
-                return fd
-        except BaseException:
-            os.close(fd)
-            raise
-        os.close(fd)
+            kept = _ours(fd, path)
+        finally:
+            if not kept:
+                os.close(fd)
+        if kept:
+            return fd
+
+
+def _cannot(path: str, e: OSError) -> Fail:
+    return Fail('cannot lock %s: %s; nothing was changed' % (path, e.strerror or reason(e)))
 
 
 @contextlib.contextmanager
@@ -106,6 +140,9 @@ def lock(root: str, say: Callable[[str], object]) -> Generator[None]:
     path = os.path.join(root, NAME)
     try:
         fd = _acquire(path)
+    except OSError as e:
+        raise _cannot(path, e) from None
+    try:
         try:
             owner = _read(fd)
             if owner:
@@ -118,12 +155,8 @@ def lock(root: str, say: Callable[[str], object]) -> Generator[None]:
             os.lseek(fd, 0, os.SEEK_SET)
             started = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
             os.write(fd, ('pid=%d host=%s started=%s\n' % (os.getpid(), socket.gethostname(), started)).encode())
-        except BaseException:
-            _release(fd, path)
-            raise
-    except OSError as e:
-        raise Fail('cannot lock %s: %s; nothing was changed' % (path, e.strerror or reason(e))) from None
-    try:
+        except OSError as e:
+            raise _cannot(path, e) from None
         yield
     finally:
         _release(fd, path)

@@ -39,13 +39,16 @@ TIME = r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ'
 
 
 def tree(base: str) -> dict[str, bytes | None]:
-    """Every path under base, with file contents."""
+    """Every path under base, with file contents, or 'link:' and its target for a symlink."""
     out: dict[str, bytes | None] = {}
     for d, dirs, fs in os.walk(base):
         for sub in dirs:
             out[os.path.relpath(os.path.join(d, sub), base)] = None
         for f in fs:
             p = os.path.join(d, f)
+            if os.path.islink(p):
+                out[os.path.relpath(p, base)] = b'link:' + os.fsencode(os.readlink(p))
+                continue
             with open(p, 'rb') as fh:
                 out[os.path.relpath(p, base)] = fh.read()
     return out
@@ -192,13 +195,50 @@ class Lock(unittest.TestCase):
             self.assertTrue(os.path.isfile(self.path))
         self.assertEqual(self.said, [])
 
-    def test_a_lock_path_that_is_a_folder_is_refused(self):
-        os.mkdir(self.path)
+    def refused_as_not_plain(self) -> None:
+        """Run on root and check it was refused because the lock path is not a plain file, with nothing changed."""
         before = tree(self.tmp)
         code, out, err = self.cli(*self.commands()['run'])
         self.assertEqual((code, out), (1, ''))
-        self.assertRegex(err, r'^error: cannot lock %s: [^\n]+; nothing was changed\n$' % re.escape(self.path))
+        self.assertEqual(err, 'error: %s is not a plain file; nothing was changed\n' % self.path)
         self.assertEqual(tree(self.tmp), before)
+
+    def test_a_lock_path_that_is_a_folder_is_refused(self):
+        os.mkdir(self.path)
+        self.refused_as_not_plain()
+
+    def test_a_lock_path_that_is_a_hard_link_is_refused(self):
+        # Writing the record through a second name would overwrite the other file.
+        target = os.path.join(self.tmp, 'notes.txt')
+        with open(target, 'wb') as f:
+            f.write(b'keep me\n')
+        os.link(target, self.path)
+        self.refused_as_not_plain()
+        with open(target, 'rb') as f:
+            self.assertEqual(f.read(), b'keep me\n')
+        self.assertTrue(os.path.samefile(target, self.path))
+
+    def test_linux_a_lock_path_that_is_a_symlink_is_refused(self):
+        target = os.path.join(self.tmp, 'notes.txt')
+        with open(target, 'wb') as f:
+            f.write(b'keep me\n')
+        os.symlink(target, self.path)
+        self.refused_as_not_plain()
+        with open(target, 'rb') as f:
+            self.assertEqual(f.read(), b'keep me\n')
+        self.assertEqual(os.readlink(self.path), target)
+        # A link to a file that isn't there is refused too, and the file is not made.
+        os.remove(self.path)
+        os.remove(target)
+        os.symlink(target, self.path)
+        self.refused_as_not_plain()
+        self.assertFalse(os.path.lexists(target))
+        self.assertEqual(os.readlink(self.path), target)
+
+    def test_the_lock_file_is_private_to_its_owner(self):
+        with lock(self.root, self.said.append):
+            mode = os.stat(self.path).st_mode & 0o777
+        self.assertEqual(mode, 0o600 if hostcat.this_host() == 'linux' else 0o666)
 
     def test_the_lock_file_removed_by_hand_during_a_run(self):
         # Linux lets anyone remove the file; the run then leaves alone whatever sits at that name when it ends.
