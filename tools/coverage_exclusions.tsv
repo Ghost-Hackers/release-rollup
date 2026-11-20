@@ -2,7 +2,7 @@
 # file	line, or from->to for a branch	host (all, linux or windows)	the line's text, stripped	proof
 # For a branch the text is that of the "from" line. A negative "to" is coverage's exit from the function
 # starting at that line. tools/check_coverage.py checks this list.
-src/release_rollup/cli.py	34	all	return 'a file name was refused (%s); check for a name this system cannot open (on Windows: CON, NUL, a trailing dot or space)' % e	describe() gets a ValueError only from path functions fed a NUL, and argv can't carry a NUL (execve and CreateProcess end the string there); zip names with a NUL are refused as unsafe names first, and container.py turns parse_manifest's ValueError into Fail.
+src/release_rollup/cli.py	36	all	return 'a file name was refused (%s); check for a name this system cannot open (on Windows: CON, NUL, a trailing dot or space)' % e	describe() gets a ValueError only from path functions fed a NUL, and argv can't carry a NUL (execve and CreateProcess end the string there); zip names with a NUL are refused as unsafe names first, and container.py turns parse_manifest's ValueError into Fail.
 src/release_rollup/container.py	177	linux	if len(path) < 200 or path.startswith('\\\\?\\'):	long_path() returns at the os.name check above off Windows.
 src/release_rollup/container.py	178	linux	return path	long_path() returns at the os.name check above off Windows.
 src/release_rollup/container.py	179	linux	if path.startswith('\\\\'):	long_path() returns at the os.name check above off Windows.
@@ -33,3 +33,35 @@ src/release_rollup/container.py	176	windows	return path	os.name is 'nt' on Windo
 src/release_rollup/container.py	523	windows	raise Fail('a source file got shorter while it was being read; sources kept')	A file that reads shorter than its size while nothing changes it is a Linux sysfs file; on Windows the source has to shrink during the run.
 src/release_rollup/core.py	235->239	windows	if windows:	host_is_windows() is True on Windows, so this check always raises.
 src/release_rollup/core.py	241	windows	return len(bad)	host_is_windows() is True on Windows, so one of the two raises above runs first.
+src/release_rollup/lock.py	22	linux	import msvcrt	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	26	linux	_AT = 1 << 20	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	27	linux	_FLAGS = os.O_RDWR | os.O_CREAT | os.O_BINARY	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	29	linux	def _try_lock(fd: int) -> bool:	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	30	linux	os.lseek(fd, _AT, os.SEEK_SET)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	31	linux	try:	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	32	linux	msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	33	linux	except OSError:	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	34	linux	return False	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	35	linux	return True	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	37	linux	def _release(fd: int, path: str) -> None:	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	40	linux	os.ftruncate(fd, 0)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	41	linux	os.lseek(fd, _AT, os.SEEK_SET)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	42	linux	msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	43	linux	os.close(fd)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	44	linux	with contextlib.suppress(OSError):	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	45	linux	os.remove(path)	sys.platform is 'win32' only on Windows, so the Windows half of lock.py never runs on Linux; test_lock runs it on the Windows hosts.
+src/release_rollup/lock.py	47	windows	import fcntl	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	49	windows	_FLAGS = os.O_RDWR | os.O_CREAT	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	51	windows	def _try_lock(fd: int) -> bool:	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	52	windows	try:	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	53	windows	fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	54	windows	except BlockingIOError:	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	55	windows	return False	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	56	windows	return True	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	58	windows	def _release(fd: int, path: str) -> None:	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	61	windows	if _ours(fd, path):	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	62	windows	os.remove(path)	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	63	windows	os.close(fd)	sys.platform is 'win32' on Windows, so the flock half of lock.py never runs there; test_lock runs it on Linux.
+src/release_rollup/lock.py	70	windows	except FileNotFoundError:	On Windows the file is open here (os.open never shares delete access), so nobody can remove it and os.stat finds it.
+src/release_rollup/lock.py	71	windows	return False	On Windows the file is open here (os.open never shares delete access), so nobody can remove it and os.stat finds it.
+src/release_rollup/lock.py	99	all	os.close(fd)	Needs another run to release and remove the lock file in the microseconds between this run's os.open() and its _ours() check, and a new file to take its name; no test can time that. On Windows the open handle stops the file from being removed at all.

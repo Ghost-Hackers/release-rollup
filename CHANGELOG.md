@@ -13,6 +13,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- `run`, `pre`, `upgrade` and `archive` lock the folder they work on, so a second run on the same folder stops with an error that names the lock file and the run holding it, before anything changes. A lock left by a run that was killed is cleared on the next run. `--dry-run` takes no lock (#7).
+
 ## [0.2.0-beta.3] - 2026-11-14
 
 ### Added
