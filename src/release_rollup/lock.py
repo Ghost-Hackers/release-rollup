@@ -194,6 +194,8 @@ def lock(root: str, say: Callable[[str], object]) -> Generator[None]:
             else:
                 say('cleared a stale lock in %s that held an unreadable record' % path)
         try:
+            # _try_lock() moved the offset to the locked byte on Windows; the record goes at the start.
+            os.lseek(fd, 0, os.SEEK_SET)
             started = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
             os.write(fd, ('pid=%d host=%s started=%s\n' % (os.getpid(), socket.gethostname(), started)).encode())
         except OSError as e:
