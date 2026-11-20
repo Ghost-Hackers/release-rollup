@@ -235,22 +235,76 @@ class Lock(unittest.TestCase):
         self.assertFalse(os.path.lexists(target))
         self.assertEqual(os.readlink(self.path), target)
 
-    def test_a_read_only_leftover_lock_file_is_refused(self):
-        # The file can't be opened for writing, so the run stops before it reads or changes anything.
-        with open(self.path, 'wb') as f:
-            f.write(b'pid=12 host=old-box started=2026-01-02T03:04:05Z\n')
+    def stale_file(self) -> None:
+        """Leave a lock file from a run that is gone, read-only for this user, as one made by another user would be."""
+        with open(self.path, 'w', encoding='utf-8') as f:
+            f.write('pid=12 host=old-box started=2026-01-02T03:04:05Z\n')
         os.chmod(self.path, 0o444)
-        self.addCleanup(os.chmod, self.path, 0o644)
+        self.addCleanup(lambda: os.path.exists(self.path) and os.chmod(self.path, 0o644))
+
+    def test_a_stale_lock_file_this_user_cannot_write_is_replaced(self):
+        # Linux: removing a file needs write access to the folder only, so the run swaps in a file of its own.
+        # Windows refuses to remove a read-only file, so the run stops and names it.
+        self.stale_file()
+        before = tree(self.tmp)
+        code, out, err = self.cli(*self.commands()['run'])
+        if hostcat.this_host() == 'windows':
+            self.assertEqual((code, out), (1, ''))
+            self.assertRegex(err, r'^error: %s was left by a run that is no longer running and has to be removed by '
+                             r'hand \([^\n]+\); nothing was changed\n$' % re.escape(self.path))
+            self.assertEqual(tree(self.tmp), before)
+            return
+        self.assertEqual((code, err), (0, ''))
+        self.assertIn('cleared a stale lock in %s left by a run that ended without releasing it (pid 12 on old-box, '
+                      'started 2026-01-02T03:04:05Z)' % self.path, out)
+        self.assertFalse(os.path.exists(self.path))
+        self.assertTrue(os.path.isfile(os.path.join(self.root, '0.1.zip')))
+
+    def test_linux_a_stale_lock_file_in_a_folder_this_user_cannot_write_is_named(self):
+        # A sticky folder, where only the owner of a file may remove it, refuses the removal the same way.
+        self.stale_file()
+        os.chmod(self.root, 0o555)
+        self.addCleanup(os.chmod, self.root, 0o755)
+        if os.access(self.root, os.W_OK):
+            self.fail('%s is still writable after chmod 555: run the tests as a normal user' % self.root)
         before = tree(self.tmp)
         code, out, err = self.cli(*self.commands()['run'])
         self.assertEqual((code, out), (1, ''))
-        self.assertEqual(err, 'error: cannot lock %s: Permission denied; nothing was changed\n' % self.path)
+        self.assertEqual(err, 'error: %s was left by a run that is no longer running and has to be removed by hand '
+                         '(Permission denied); nothing was changed\n' % self.path)
         self.assertEqual(tree(self.tmp), before)
 
-    def test_the_lock_file_is_private_to_its_owner(self):
+    def test_a_stale_lock_file_open_in_another_program(self):
+        # Windows can't remove a file another program has open, so the run stops; Linux removes it all the same.
+        self.stale_file()
+        reader = open(self.path, 'rb')
+        self.addCleanup(reader.close)
+        code, out, err = self.cli(*self.commands()['run'])
+        if hostcat.this_host() == 'windows':
+            self.assertEqual((code, out), (1, ''))
+            self.assertRegex(err, r'^error: cannot lock %s: [^\n]+; nothing was changed\n$' % re.escape(self.path))
+            self.assertTrue(os.path.exists(self.path))
+            return
+        self.assertEqual((code, err), (0, ''))
+        self.assertIn('cleared a stale lock in %s left by a run that ended without releasing it' % self.path, out)
+        self.assertEqual(reader.read(), b'pid=12 host=old-box started=2026-01-02T03:04:05Z\n')
+
+    def test_a_held_lock_file_this_user_cannot_write_names_the_holder(self):
+        # Another user's run holds the lock through a file this user can only read.
+        _, pid = self.hold()
+        os.chmod(self.path, 0o444)
+        self.addCleanup(lambda: os.path.exists(self.path) and os.chmod(self.path, 0o644))
+        before = tree(self.tmp)
+        code, out, err = self.cli(*self.commands()['run'])
+        self.assertEqual((code, out), (1, ''))
+        self.assertRegex(err, r'^error: %s is held by another run \(pid %d on %s, started %s\); nothing was changed\n$'
+                         % (re.escape(self.path), pid, re.escape(socket.gethostname()), TIME))
+        self.assertEqual(tree(self.tmp), before)
+
+    def test_the_lock_file_is_not_readable_by_other_users(self):
         with lock(self.root, self.said.append):
             mode = os.stat(self.path).st_mode & 0o777
-        self.assertEqual(mode, 0o600 if hostcat.this_host() == 'linux' else 0o666)
+        self.assertEqual(mode, 0o640 if hostcat.this_host() == 'linux' else 0o666)
 
     def test_the_lock_file_removed_by_hand_during_a_run(self):
         # Linux lets anyone remove the file; the run then leaves alone whatever sits at that name when it ends.
