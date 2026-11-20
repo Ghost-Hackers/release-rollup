@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import os
 import sys
 from collections.abc import Sequence
@@ -6,6 +7,7 @@ from collections.abc import Sequence
 from . import __version__
 from .container import DEFAULT_MAX_SIZE, restore
 from .core import DEFAULT_MARKERS, PRE_MARKERS, Fail, apply, apply_pre, make_trash, upgrade, archive
+from .lock import lock
 
 
 class Args(argparse.Namespace):
@@ -107,18 +109,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print('error: %s is not a folder' % root, file=sys.stderr)
         return 2
     try:
-        trash = None if a.dry_run else make_trash(a.trash_dir)
-        if a.cmd == 'archive':
-            assert a.out is not None  # --out is required for archive
-            archive(root, a.out, dry=a.dry_run, trash=trash)
-        elif a.cmd == 'upgrade':
-            upgrade(root, dry=a.dry_run, trash=trash)
-        elif a.cmd == 'pre':
-            apply_pre(root, current=a.current, dry=a.dry_run, trash=trash, markers=tuple(a.marker) if a.marker else PRE_MARKERS,
-                      dedupe=not a.no_dedupe)
-        else:
-            apply(root, dry=a.dry_run, trash=trash, markers=tuple(a.marker) if a.marker else DEFAULT_MARKERS,
-                  keep_rc=a.keep_rc, zip_newest=a.zip_newest, dedupe=not a.no_dedupe)
+        # --dry-run changes nothing, so it runs next to a run that holds the lock.
+        with contextlib.nullcontext() if a.dry_run else lock(root, print):
+            trash = None if a.dry_run else make_trash(a.trash_dir)
+            if a.cmd == 'archive':
+                assert a.out is not None  # --out is required for archive
+                archive(root, a.out, dry=a.dry_run, trash=trash)
+            elif a.cmd == 'upgrade':
+                upgrade(root, dry=a.dry_run, trash=trash)
+            elif a.cmd == 'pre':
+                apply_pre(root, current=a.current, dry=a.dry_run, trash=trash, markers=tuple(a.marker) if a.marker else PRE_MARKERS,
+                          dedupe=not a.no_dedupe)
+            else:
+                apply(root, dry=a.dry_run, trash=trash, markers=tuple(a.marker) if a.marker else DEFAULT_MARKERS,
+                      keep_rc=a.keep_rc, zip_newest=a.zip_newest, dedupe=not a.no_dedupe)
     except Fail as e:
         print('error: %s' % e, file=sys.stderr)
         return 1
