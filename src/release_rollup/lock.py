@@ -36,15 +36,14 @@ if sys.platform == 'win32':
             return False
         return True
 
-    def _release(fd: int, path: str) -> None:
-        # Windows can't remove an open file, so close it first. A run that opened it in the meantime keeps it from
-        # being removed; it stays behind empty, and the next run takes an empty file as free.
-        try:
-            os.ftruncate(fd, 0)
-            os.lseek(fd, _AT, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        finally:
-            os.close(fd)
+    def _unlock(fd: int, path: str) -> None:
+        os.ftruncate(fd, 0)
+        os.lseek(fd, _AT, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+    def _remove_closed(path: str) -> None:
+        # Windows can't remove an open file, so this runs once it is closed. A run that opened it in the meantime
+        # keeps it from being removed; it stays behind empty, and the next run takes an empty file as free.
         with contextlib.suppress(OSError):
             os.remove(path)
 else:
@@ -59,14 +58,14 @@ else:
             return False
         return True
 
-    def _release(fd: int, path: str) -> None:
-        # Remove the file while the lock is still held. A run that opened it just before gets the lock on a removed
-        # file once we close, sees that in _ours() and starts over on a new one.
-        try:
-            if _ours(fd, path):
-                os.remove(path)
-        finally:
-            os.close(fd)
+    def _unlock(fd: int, path: str) -> None:
+        # Remove the file while the lock is still held; closing the file lets go of the lock. A run that opened it
+        # just before gets the lock on a removed file once we close, sees that in _ours() and starts over.
+        if _ours(fd, path):
+            os.remove(path)
+
+    def _remove_closed(path: str) -> None:
+        """Nothing to do: the file went before it was closed."""
 
 
 def _ours(fd: int, path: str) -> bool:
@@ -160,4 +159,8 @@ def lock(root: str, say: Callable[[str], object]) -> Generator[None]:
             raise _cannot(path, e) from None
         yield
     finally:
-        _release(fd, path)
+        try:
+            _unlock(fd, path)
+        finally:
+            os.close(fd)
+        _remove_closed(path)

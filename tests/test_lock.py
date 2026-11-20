@@ -235,6 +235,18 @@ class Lock(unittest.TestCase):
         self.assertFalse(os.path.lexists(target))
         self.assertEqual(os.readlink(self.path), target)
 
+    def test_a_read_only_leftover_lock_file_is_refused(self):
+        # The file can't be opened for writing, so the run stops before it reads or changes anything.
+        with open(self.path, 'wb') as f:
+            f.write(b'pid=12 host=old-box started=2026-01-02T03:04:05Z\n')
+        os.chmod(self.path, 0o444)
+        self.addCleanup(os.chmod, self.path, 0o644)
+        before = tree(self.tmp)
+        code, out, err = self.cli(*self.commands()['run'])
+        self.assertEqual((code, out), (1, ''))
+        self.assertEqual(err, 'error: cannot lock %s: Permission denied; nothing was changed\n' % self.path)
+        self.assertEqual(tree(self.tmp), before)
+
     def test_the_lock_file_is_private_to_its_owner(self):
         with lock(self.root, self.said.append):
             mode = os.stat(self.path).st_mode & 0o777
