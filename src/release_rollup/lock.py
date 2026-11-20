@@ -1,9 +1,10 @@
 """The lock that refuses a second run on a folder while the first one still works on it.
 
 It is an OS file lock on <root>/.release-rollup.lock: flock on Linux and macOS, a byte-range lock on Windows. The OS
-drops it the moment the process ends, killed or not, so a lock is never held by a run that is gone. The file holds
-one line naming the run that has it. A run that gets the lock and still finds a line there knows that run ended
-without cleaning up, says so and goes on. A clean end removes the file.
+drops it when the process ends, killed or not: Linux at once, Windows shortly after. So a run that is gone holds no
+lock for long, and no one has to remove it by hand. The file holds one line naming the run that has it. A run that
+gets the lock and still finds a line there knows that run ended without cleaning up, says so and goes on. A clean
+end removes the file.
 """
 import contextlib
 import datetime

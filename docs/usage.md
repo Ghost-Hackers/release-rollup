@@ -209,7 +209,7 @@ Run it again and it prints `nothing to do`.
 error: /srv/releases/.release-rollup.lock is held by another run (pid 4711 on buildbox, started 2026-11-19T12:00:00Z); nothing was changed
 ```
 
-The lock is an OS file lock on `.release-rollup.lock` in the root folder, and the file holds one line with the pid, host and start time of the run that has it. The file is removed when the run ends. If a run is killed, the OS lets go of its lock at once; the next run finds the old line, prints `cleared a stale lock in ... left by a run that ended without releasing it (...)` and goes on. Nothing has to be deleted by hand.
+The lock is an OS file lock on `.release-rollup.lock` in the root folder, and the file holds one line with the pid, host and start time of the run that has it. The file is removed when the run ends. If a run is killed, the OS lets go of its lock: Linux at once, Windows shortly after the process ends, and a run started in that gap is refused like any other. The next run finds the old line, prints `cleared a stale lock in ... left by a run that ended without releasing it (...)` and goes on. Nothing has to be deleted by hand.
 
 `--dry-run` changes nothing, so it takes no lock and works while another run holds the folder. `restore` is not locked: it only writes into a new `--out` folder. `archive` locks only `--root`, so two archive runs with different roots and the same `--out` elsewhere are not kept apart. A folder the lock file can't be made in (read-only, or a full disk) is refused with `cannot lock`. If `.release-rollup.lock` is a symlink, a folder or a file with a second name (a hard link), the run stops with `is not a plain file` and leaves it and whatever it points to as they are.
 
