@@ -127,7 +127,7 @@ def _remove_stale(path: str) -> None:
         raise Fail('%s was left by a run that is no longer running and has to be removed by hand (%s); nothing was '
                    'changed' % (path, e.strerror or reason(e))) from None
     except FileNotFoundError:
-        pass
+        return  # someone else removed it first; _acquire() looks again
 
 
 def _acquire(path: str) -> tuple[int, str]:
@@ -142,9 +142,9 @@ def _acquire(path: str) -> tuple[int, str]:
             seen = None
         if seen is not None and not _plain(seen):
             raise Fail('%s is not a plain file; nothing was changed' % path)
-        # A new file is made with O_EXCL, which never follows a link. An existing one is opened without O_CREAT,
-        # with O_NOFOLLOW where the OS has it; Windows follows links in os.open, so the fstat check below catches a
-        # file swapped for a link since the lstat.
+        # A new file is made with O_EXCL (never follows a link), group-readable so the users of a shared folder can
+        # check it. An existing one is opened without O_CREAT, with O_NOFOLLOW where the OS has it; Windows follows
+        # links in os.open, so the fstat check below catches a file swapped for a link since the lstat.
         try:
             fd = os.open(path, _NEW if seen is None else _OLD, 0o640)
         except (FileExistsError, FileNotFoundError):
