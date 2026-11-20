@@ -143,7 +143,7 @@ Any other error that comes from the file system, such as a file the system canno
 
 The tool looks at what is on disk and works out the target layout from that, so a second run finds everything already in place and prints `nothing to do`. If a run was interrupted after a zip was renamed into place but before the sources were trashed, the next run sees the finished zip, checks it again against the leftover sources, and trashes them.
 
-Two runs on one folder at the same time are not allowed: the second one finds the folder locked and stops with nothing changed. A run that was killed leaves its lock file behind, but not the lock itself, so the next run clears it and carries on. See [One run per folder](usage.md#one-run-per-folder).
+Two runs on one folder at the same time are not allowed: the second one finds the folder locked and stops with nothing changed. A run that was killed leaves its lock file behind, and the OS lets go of the lock itself: Linux at once, Windows shortly after the process ends. A run started in that gap on Windows is refused like any other; after it, the next run clears the old file and carries on. See [One run per folder](usage.md#one-run-per-folder).
 
 If a release is published late into an old line (say 0.1.4 appears after `0.1.zip` exists), the next run rebuilds `0.1.zip` with the new member and trashes the old one.
 
